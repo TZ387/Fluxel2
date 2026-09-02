@@ -212,13 +212,18 @@ h1 {
 .repeat-add-btn:disabled { opacity: .35; cursor: not-allowed; }
 
 .model-select {
+  appearance: none;
+  -webkit-appearance: none;
   font-family: var(--mono);
   font-size: 16px;
   color: var(--text);
-  background: var(--bg3);
+  background-color: var(--bg3);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238b949e'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
   border: 1px solid var(--border);
   border-radius: 4px;
-  padding: 6px 8px;
+  padding: 6px 28px 6px 8px;
   outline: none;
   width: 100%;
   cursor: pointer;

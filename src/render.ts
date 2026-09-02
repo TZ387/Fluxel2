@@ -71,7 +71,7 @@ export function drawColorbar(
    ================================================================ */
 export function drawSlices(
   cvId: string,
-  vol: Float64Array,
+  vol: Float32Array,
   nx: number,
   ny: number,
   nz: number,

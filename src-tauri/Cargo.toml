@@ -23,3 +23,12 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# `tauri dev` always builds the `dev` profile, which by default has all
+# optimizations off — fine for typical Tauri apps, but the physics loops in
+# src/physics/ are genuinely numeric hot paths (exp/sqrt/tanh per voxel) and
+# are 20-50x slower unoptimized than they need to be. Debug assertions/
+# overflow checks stay on for safety during development; this only affects
+# codegen quality.
+[profile.dev]
+opt-level = 3
+

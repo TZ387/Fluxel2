@@ -2,6 +2,7 @@ import "./styles.css";
 import { MODELS, buildModelSelect } from "./models";
 import { buildModelParams, getParams } from "./ui-params";
 import { drawSlices, drawColorbar } from "./render";
+import { runModel } from "./compute";
 
 /* ================================================================
    SIMULATION STATE
@@ -10,27 +11,63 @@ import { drawSlices, drawColorbar } from "./render";
    they were computed on. Wrapped in an object (rather than loose
    globals) so the fields it owns and the ways it can be mutated
    are explicit and in one place.
+
+   Each volume's log-scale transform and min/max are precomputed once
+   here (an O(nx*ny*nz) pass) rather than in redraw() — redraw() runs
+   on every axis-slider drag, which only changes which 2D slice is
+   shown, not the underlying data, so redoing that full-volume pass
+   per drag was wasted work (invisible at Fluxel's original ≤80³
+   grids, very much not at the higher resolutions Rust now makes
+   practical — e.g. a slider drag at 400³ was re-running ~64M
+   Math.log10 calls before this).
    ================================================================ */
 type VolumeKind = "phi" | "abs";
+
+interface VolumeCache {
+  logData: Float32Array;
+  vmin: number;
+  vmax: number;
+  logMin: number;
+  logMax: number;
+}
+
+function buildVolumeCache(vol: Float32Array): VolumeCache {
+  let vmin = Infinity,
+    vmax = -Infinity;
+  for (let i = 0; i < vol.length; i++) {
+    if (vol[i] > vmax) vmax = vol[i];
+    if (vol[i] < vmin) vmin = vol[i];
+  }
+
+  /* Use log scale for colormap normalisation — better shows dynamic range */
+  const logMin = vmin > 0 ? Math.log10(vmin) : Math.log10(Math.max(vmax * 1e-6, 1e-30));
+  const logMax = vmax > 0 ? Math.log10(vmax) : 0;
+  const logData = new Float32Array(vol.length);
+  for (let i = 0; i < vol.length; i++) {
+    logData[i] = vol[i] > 0 ? Math.log10(vol[i]) : logMin;
+  }
+
+  return { logData, vmin, vmax, logMin, logMax };
+}
 
 const Simulation = {
   nx: 40,
   ny: 40,
   nz: 40,
-  phi: null as Float64Array | null,
-  abs: null as Float64Array | null,
+  phi: null as VolumeCache | null,
+  abs: null as VolumeCache | null,
 
   /** Store a freshly computed result and remember the grid it used. */
-  set(nx: number, ny: number, nz: number, phi: Float64Array, abs: Float64Array) {
+  set(nx: number, ny: number, nz: number, phi: Float32Array, abs: Float32Array) {
     this.nx = nx;
     this.ny = ny;
     this.nz = nz;
-    this.phi = phi;
-    this.abs = abs;
+    this.phi = buildVolumeCache(phi);
+    this.abs = buildVolumeCache(abs);
   },
 
-  /** 'phi' | 'abs' → the matching Float64Array, or null if not yet computed. */
-  volume(suffix: VolumeKind): Float64Array | null {
+  /** 'phi' | 'abs' → the matching cache, or null if not yet computed. */
+  volume(suffix: VolumeKind): VolumeCache | null {
     return suffix === "phi" ? this.phi : this.abs;
   },
 
@@ -74,27 +111,23 @@ function getSlice(suffix: VolumeKind): { ix: number; iy: number; iz: number } {
 }
 
 function redraw(suffix: VolumeKind): void {
-  const vol = Simulation.volume(suffix);
-  if (!vol) return;
+  const cache = Simulation.volume(suffix);
+  if (!cache) return;
   const { ix, iy, iz } = getSlice(suffix);
 
-  let vmin = Infinity,
-    vmax = -Infinity;
-  for (let i = 0; i < vol.length; i++) {
-    if (vol[i] > vmax) vmax = vol[i];
-    if (vol[i] < vmin) vmin = vol[i];
-  }
-
-  /* Use log scale for colormap normalisation — better shows dynamic range */
-  const logVol = new Float64Array(vol.length);
-  const logMin = vmin > 0 ? Math.log10(vmin) : Math.log10(Math.max(vmax * 1e-6, 1e-30));
-  const logMax = vmax > 0 ? Math.log10(vmax) : 0;
-  for (let i = 0; i < vol.length; i++) {
-    logVol[i] = vol[i] > 0 ? Math.log10(vol[i]) : logMin;
-  }
-
-  drawSlices(`cv-${suffix}`, logVol, Simulation.nx, Simulation.ny, Simulation.nz, ix, iy, iz, logMin, logMax);
-  drawColorbar(`cbar-${suffix}`, `clbl-${suffix}-hi`, `clbl-${suffix}-mid`, `clbl-${suffix}-lo`, vmin, vmax);
+  drawSlices(
+    `cv-${suffix}`,
+    cache.logData,
+    Simulation.nx,
+    Simulation.ny,
+    Simulation.nz,
+    ix,
+    iy,
+    iz,
+    cache.logMin,
+    cache.logMax
+  );
+  drawColorbar(`cbar-${suffix}`, `clbl-${suffix}-hi`, `clbl-${suffix}-mid`, `clbl-${suffix}-lo`, cache.vmin, cache.vmax);
 }
 
 /* ================================================================
@@ -127,7 +160,7 @@ window.addEventListener("resize", () => {
 /* ================================================================
    MAIN RUN HANDLER
    ================================================================ */
-document.getElementById("run-btn")!.addEventListener("click", () => {
+document.getElementById("run-btn")!.addEventListener("click", async () => {
   const p = getParams(); // reads whatever controls the current model's paramGroups produced
   const btn = document.getElementById("run-btn") as HTMLButtonElement;
   const st = document.getElementById("status")!;
@@ -135,56 +168,51 @@ document.getElementById("run-btn")!.addEventListener("click", () => {
   btn.disabled = true;
   st.textContent = "Computing…";
 
-  /* Yield to browser for status paint, then compute */
-  setTimeout(() => {
-    const model = MODELS[(document.getElementById("model-select") as HTMLSelectElement).value];
+  const model = MODELS[(document.getElementById("model-select") as HTMLSelectElement).value];
 
-    const t0 = performance.now();
-    const { phi, abs, derived } = model.compute(p);
-    const dt = (performance.now() - t0).toFixed(1);
+  const t0 = performance.now();
+  const { phi, abs, derived, valid, reasons } = await runModel(model.command, p);
+  const dt = (performance.now() - t0).toFixed(1);
 
-    Simulation.set(p.nx, p.ny, p.nz, phi, abs);
+  Simulation.set(p.nx, p.ny, p.nz, phi, abs);
 
-    /* Show plots section */
-    (document.getElementById("plots") as HTMLElement).style.display = "";
+  /* Show plots section */
+  (document.getElementById("plots") as HTMLElement).style.display = "";
 
-    /* Rebuild sliders with correct max values */
-    buildAxisSliders("sl-phi", "phi");
-    buildAxisSliders("sl-abs", "abs");
+  /* Rebuild sliders with correct max values */
+  buildAxisSliders("sl-phi", "phi");
+  buildAxisSliders("sl-abs", "abs");
 
-    /* Resize canvases to match their rendered pixel width */
-    ["cv-phi", "cv-abs"].forEach((id) => {
-      const cv = document.getElementById(id) as HTMLCanvasElement;
-      cv.width = cv.offsetWidth || 400;
-      cv.height = cv.offsetHeight || 400;
+  /* Resize canvases to match their rendered pixel width */
+  ["cv-phi", "cv-abs"].forEach((id) => {
+    const cv = document.getElementById(id) as HTMLCanvasElement;
+    cv.width = cv.offsetWidth || 400;
+    cv.height = cv.offsetHeight || 400;
+  });
+
+  redraw("phi");
+  redraw("abs");
+
+  const summary = model.summaryLine(derived, dt);
+
+  st.textContent = "";
+  st.innerHTML = summary;
+
+  if (!valid) {
+    const warn = document.createElement("div");
+    warn.className = "status-warn";
+    const intro = document.createElement("p");
+    intro.textContent = "⚠ Results may not be accurate — diffusion approximation is weakly justified here:";
+    warn.appendChild(intro);
+    reasons.forEach((reason) => {
+      const para = document.createElement("p");
+      para.innerHTML = reason + ".";
+      warn.appendChild(para);
     });
+    st.appendChild(warn);
+  }
 
-    redraw("phi");
-    redraw("abs");
-
-    const summary = model.summaryLine(derived, dt);
-
-    const validity = model.checkValidity ? model.checkValidity(p, derived) : { valid: true, reasons: [] };
-
-    st.textContent = "";
-    st.innerHTML = summary;
-
-    if (!validity.valid) {
-      const warn = document.createElement("div");
-      warn.className = "status-warn";
-      const intro = document.createElement("p");
-      intro.textContent = "⚠ Results may not be accurate — diffusion approximation is weakly justified here:";
-      warn.appendChild(intro);
-      validity.reasons.forEach((reason) => {
-        const para = document.createElement("p");
-        para.innerHTML = reason + ".";
-        warn.appendChild(para);
-      });
-      st.appendChild(warn);
-    }
-
-    btn.disabled = false;
-  }, 20);
+  btn.disabled = false;
 });
 
 /* ================================================================
