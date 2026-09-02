@@ -1,116 +1,351 @@
-.logo.vite:hover {
-  filter: drop-shadow(0 0 2em #747bff);
-}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-.logo.typescript:hover {
-  filter: drop-shadow(0 0 2em #2d79c7);
-}
 :root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 24px;
-  font-weight: 400;
-
-  color: #0f0f0f;
-  background-color: #f6f6f6;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
+  --bg:        #0d1117;
+  --bg2:       #161b22;
+  --bg3:       #21262d;
+  --border:    #30363d;
+  --text:      #e6edf3;
+  --text2:     #8b949e;
+  --accent:    #58a6ff;
+  --accent2:   #3fb950;
+  --mono:      'Cascadia Code', 'Fira Mono', 'Consolas', monospace;
 }
 
-.container {
-  margin: 0;
-  padding-top: 10vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  text-align: center;
+html {
+  /* Explicit baseline so 1rem = 16px and all rem-based sizing below
+     scales predictably with the browser's own zoom/text-size settings,
+     rather than being pinned to raw pixel values. */
+  font-size: 100%;
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: 0.75s;
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 0.875rem;   /* 14px */
+  line-height: 1.5;
+  min-height: 100vh;
 }
 
-.logo.tauri:hover {
-  filter: drop-shadow(0 0 2em #24c8db);
-}
-
-.row {
-  display: flex;
-  justify-content: center;
-}
-
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-
-a:hover {
-  color: #535bf2;
+/* Bounds the layout so it stays legible and well-proportioned on very
+   wide monitors instead of stretching panels and plots edge-to-edge,
+   while still shrinking gracefully down to mobile widths. */
+.app-shell {
+  max-width: 74rem;   /* ~1184px */
+  margin: 0 auto;
+  padding: clamp(12px, 3vw, 20px);
 }
 
 h1 {
-  text-align: center;
+  font-size: clamp(1.125rem, 1rem + 0.6vw, 1.95rem);
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
 }
 
-input,
-button {
+.subtitle {
+  font-size: 1.2rem;   /* 13px */
+  color: var(--text2);
+  font-family: var(--mono);
+  margin-bottom: 20px;
+}
+
+/* ── panels ─────────────────────────────────────────────────── */
+.panel {
+  background: var(--bg2);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
-  transition: border-color 0.25s;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
+  padding: 16px;
+  margin-bottom: 16px;
 }
 
-button {
+.panel-title {
+  font-size: 1.1rem;   /* 12px, was 11px */
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text2);
+  margin-bottom: 12px;
+}
+
+/* ── param grid ──────────────────────────────────────────────── */
+.param-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px 24px;
+}
+
+.param-row { display: flex; flex-direction: column; gap: 4px; }
+
+.param-label {
+  font-size: 1rem;   /* 12px, was 11px */
+  color: var(--text2);
+  font-family: var(--mono);
+}
+
+.param-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.param-ctrl input[type=range] {
+  flex: 1;
+  appearance: none;
+  height: 4px;
+  background: var(--bg3);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.param-ctrl input[type=range]::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px; height: 14px;
+  background: var(--accent);
+  border-radius: 50%;
   cursor: pointer;
 }
 
-button:hover {
-  border-color: #396cd8;
-}
-button:active {
-  border-color: #396cd8;
-  background-color: #e8e8e8;
+.param-ctrl input[type=range]::-moz-range-thumb {
+  width: 14px; height: 14px;
+  background: var(--accent);
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
 }
 
-input,
-button {
+/* shared style for the three editable number boxes */
+.param-ctrl input[type=number] {
+  font-family: var(--mono);
+  font-size: 1rem;   /* 12px, was 11px */
+  color: var(--text);
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 4px;
   outline: none;
+  -moz-appearance: textfield;
+  appearance: textfield;
+  text-align: center;
 }
 
-#greet-input {
-  margin-right: 5px;
+.param-ctrl input[type=number]::-webkit-inner-spin-button,
+.param-ctrl input[type=number]::-webkit-outer-spin-button { display: none; }
+
+.param-ctrl input[type=number]:focus {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #f6f6f6;
-    background-color: #2f2f2f;
-  }
+/* range-bound boxes (min / max) */
+.param-ctrl input.p-bound {
+  width: 52px;
+  color: var(--text2);
+}
 
-  a:hover {
-    color: #24c8db;
-  }
+/* current-value box */
+.param-ctrl input.p-val {
+  width: 64px;
+  color: var(--accent);
+  font-weight: 600;
+}
 
-  input,
-  button {
-    color: #ffffff;
-    background-color: #0f0f0f98;
-  }
-  button:active {
-    background-color: #0f0f0f69;
-  }
+.param-bound-lbl {
+  font-family: var(--mono);
+  font-size: 0.6875rem;   /* 11px, was 9px */
+  color: var(--text2);
+  opacity: .7;
+  user-select: none;
+}
+
+/* ── repeating parameter groups (e.g. per-layer controls) ──────── */
+.repeat-group { display: flex; flex-direction: column; gap: 12px; }
+
+.repeat-instance {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: var(--bg3);
+}
+
+.repeat-instance-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--text2);
+  font-weight: 600;
+}
+
+.repeat-remove-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text2);
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.repeat-remove-btn:hover:not(:disabled) { color: #f85149; border-color: #f85149; }
+.repeat-remove-btn:disabled { opacity: .35; cursor: not-allowed; }
+
+.repeat-add-btn {
+  align-self: flex-start;
+  background: none;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.repeat-add-btn:hover:not(:disabled) { border-color: var(--accent); background: rgba(88,166,255,0.08); }
+.repeat-add-btn:disabled { opacity: .35; cursor: not-allowed; }
+
+.model-select {
+  font-family: var(--mono);
+  font-size: 16px;
+  color: var(--text);
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  outline: none;
+  width: 100%;
+  cursor: pointer;
+}
+
+.model-select:focus { border-color: var(--accent); }
+
+/* ── run button ──────────────────────────────────────────────── */
+#run-btn {
+  margin-top: 14px;
+  padding: 8px 20px;
+  background: var(--accent2);
+  color: #0d1117;
+  border: none;
+  border-radius: 6px;
+  font-size: 1.15rem;   /* 13px */
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: opacity .15s;
+}
+
+#run-btn:hover { opacity: .85; }
+#run-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+/* ── status bar ──────────────────────────────────────────────── */
+#status {
+  font-family: var(--mono);
+  font-size: 1.2rem;   /* 13px, was 11px — this carries real numeric results */
+  color: var(--text2);
+  margin-top: 10px;
+  min-height: 16px;
+}
+
+.status-warn {
+  color: #d29922;
+  margin-top: 4px;
+}
+
+.status-warn p { margin-bottom: 0.75em; }
+.status-warn p:last-child { margin-bottom: 0; }
+
+/* ── plots ───────────────────────────────────────────────────── */
+.plots-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 820px) { .plots-row { grid-template-columns: 1fr; } }
+
+.plot-panel {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  /* Keeps a single plot from ballooning past a legible size on very
+     wide/ultrawide screens; .app-shell's max-width already bounds the
+     row overall, this is a second cap for when there's only one column. */
+  max-width: 40rem;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.plot-title {
+  font-family: var(--mono);
+  font-size: 1.2rem;   /* 13px, was 12px */
+  color: var(--text2);
+}
+
+/* canvas fills its column */
+.canvas-wrap { position: relative; width: 100%; }
+canvas.main { display: block; width: 100%; aspect-ratio: 1; background: #080c14; border-radius: 4px; }
+
+/* ── axis sliders ────────────────────────────────────────────── */
+.axis-sliders { display: flex; flex-direction: column; gap: 6px; }
+
+.axis-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 1.25rem;   /* 12px, was 11px */
+}
+
+.axis-lbl { color: var(--text2); width: 12px; }
+
+.axis-row input[type=range] {
+  flex: 1;
+  appearance: none;
+  height: 3px;
+  background: var(--bg3);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.axis-row input[type=range]::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px; height: 12px;
+  background: var(--accent);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.axis-row input[type=range]::-moz-range-thumb {
+  width: 12px; height: 12px;
+  background: var(--accent);
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+}
+
+.axis-val { color: var(--accent); min-width: 30px; text-align: right; }
+
+/* ── colorbar ────────────────────────────────────────────────── */
+.cbar-row { display: flex; gap: 8px; align-items: stretch; }
+.cbar-canvas { width: 14px; border-radius: 3px; flex-shrink: 0; }
+.cbar-labels {
+  display: flex; flex-direction: column;
+  justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 0.75rem;   /* 12px, was 10px */
+  color: var(--text2);
 }

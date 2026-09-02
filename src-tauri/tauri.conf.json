@@ -13,9 +13,9 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "fluxel2",
-        "width": 800,
-        "height": 600
+        "title": "Fluxel2",
+        "width": 1280,
+        "height": 900
       }
     ],
     "security": {
