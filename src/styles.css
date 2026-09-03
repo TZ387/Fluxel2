@@ -154,16 +154,19 @@ input[type=range]:focus-visible { box-shadow: 0 0 0 3px rgba(88,166,255,0.3); }
   color: var(--accent);
 }
 
-/* range-bound boxes (min / max) */
+/* range-bound boxes (min / max) — sized in ch (monospace character
+   width) rather than a px guess, so it fits whichever font in --mono's
+   stack actually resolves (e.g. Consolas on Windows vs. the fontconfig
+   default on Linux) instead of just the one it was eyeballed against */
 .param-ctrl input.p-bound {
-  width: 52px;
+  width: calc(6ch + 10px);
   color: var(--text2);
 }
 
-/* current-value box — wide enough for a 3-digit, 3-decimal reading
-   (e.g. "300.000") without clipping */
+/* current-value box — same reasoning, sized for a 3-digit,
+   3-decimal reading (e.g. "300.000") plus headroom */
 .param-ctrl input.p-val {
-  width: 72px;
+  width: calc(8ch + 10px);
   color: var(--accent);
   font-weight: 600;
 }
