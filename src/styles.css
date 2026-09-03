@@ -9,6 +9,8 @@
   --text2:     #8b949e;
   --accent:    #58a6ff;
   --accent2:   #3fb950;
+  --warn:      #d29922;
+  --danger:    #f85149;
   --mono:      'Cascadia Code', 'Fira Mono', 'Consolas', monospace;
 }
 
@@ -90,7 +92,8 @@ h1 {
   gap: 6px;
 }
 
-.param-ctrl input[type=range] {
+/* ── sliders (shared base; .axis-row overrides the size below) ─── */
+input[type=range] {
   flex: 1;
   appearance: none;
   height: 4px;
@@ -101,21 +104,29 @@ h1 {
   min-width: 0;
 }
 
-.param-ctrl input[type=range]::-webkit-slider-thumb {
+input[type=range]::-webkit-slider-thumb {
   appearance: none;
   width: 14px; height: 14px;
   background: var(--accent);
   border-radius: 50%;
   cursor: pointer;
+  transition: transform .12s ease;
 }
 
-.param-ctrl input[type=range]::-moz-range-thumb {
+input[type=range]::-moz-range-thumb {
   width: 14px; height: 14px;
   background: var(--accent);
   border-radius: 50%;
   border: none;
   cursor: pointer;
+  transition: transform .12s ease;
 }
+
+input[type=range]:hover::-webkit-slider-thumb,
+input[type=range]:focus-visible::-webkit-slider-thumb { transform: scale(1.2); }
+input[type=range]:hover::-moz-range-thumb,
+input[type=range]:focus-visible::-moz-range-thumb { transform: scale(1.2); }
+input[type=range]:focus-visible { box-shadow: 0 0 0 3px rgba(88,166,255,0.3); }
 
 /* shared style for the three editable number boxes */
 .param-ctrl input[type=number] {
@@ -130,10 +141,13 @@ h1 {
   -moz-appearance: textfield;
   appearance: textfield;
   text-align: center;
+  transition: border-color .12s ease;
 }
 
 .param-ctrl input[type=number]::-webkit-inner-spin-button,
 .param-ctrl input[type=number]::-webkit-outer-spin-button { display: none; }
+
+.param-ctrl input[type=number]:hover { border-color: var(--text2); }
 
 .param-ctrl input[type=number]:focus {
   border-color: var(--accent);
@@ -194,7 +208,7 @@ h1 {
   cursor: pointer;
 }
 
-.repeat-remove-btn:hover:not(:disabled) { color: #f85149; border-color: #f85149; }
+.repeat-remove-btn:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); }
 .repeat-remove-btn:disabled { opacity: .35; cursor: not-allowed; }
 
 .repeat-add-btn {
@@ -230,6 +244,7 @@ h1 {
   cursor: pointer;
 }
 
+.model-select:hover { border-color: var(--text2); }
 .model-select:focus { border-color: var(--accent); }
 
 /* ── run button ──────────────────────────────────────────────── */
@@ -262,7 +277,7 @@ h1 {
 }
 
 .status-warn {
-  color: #d29922;
+  color: var(--warn);
   margin-top: 4px;
 }
 
@@ -317,31 +332,9 @@ canvas.main { display: block; width: 100%; aspect-ratio: 1; background: #080c14;
 
 .axis-lbl { color: var(--text2); width: 12px; }
 
-.axis-row input[type=range] {
-  flex: 1;
-  appearance: none;
-  height: 3px;
-  background: var(--bg3);
-  border-radius: 2px;
-  outline: none;
-  cursor: pointer;
-}
-
-.axis-row input[type=range]::-webkit-slider-thumb {
-  appearance: none;
-  width: 12px; height: 12px;
-  background: var(--accent);
-  border-radius: 50%;
-  cursor: pointer;
-}
-
-.axis-row input[type=range]::-moz-range-thumb {
-  width: 12px; height: 12px;
-  background: var(--accent);
-  border-radius: 50%;
-  border: none;
-  cursor: pointer;
-}
+.axis-row input[type=range] { height: 3px; }
+.axis-row input[type=range]::-webkit-slider-thumb,
+.axis-row input[type=range]::-moz-range-thumb { width: 12px; height: 12px; }
 
 .axis-val { color: var(--accent); min-width: 30px; text-align: right; }
 
