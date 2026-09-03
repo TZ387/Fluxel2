@@ -45,7 +45,7 @@ h1 {
 }
 
 .subtitle {
-  font-size: 1.2rem;   /* 13px */
+  font-size: 0.8125rem;   /* 13px */
   color: var(--text2);
   font-family: var(--mono);
   margin-bottom: 20px;
@@ -61,7 +61,7 @@ h1 {
 }
 
 .panel-title {
-  font-size: 1.1rem;   /* 12px, was 11px */
+  font-size: 0.75rem;   /* 12px, was 11px */
   font-weight: 600;
   letter-spacing: .08em;
   text-transform: uppercase;
@@ -79,7 +79,7 @@ h1 {
 .param-row { display: flex; flex-direction: column; gap: 4px; }
 
 .param-label {
-  font-size: 1rem;   /* 12px, was 11px */
+  font-size: 0.75rem;   /* 12px, was 11px */
   color: var(--text2);
   font-family: var(--mono);
 }
@@ -120,7 +120,7 @@ h1 {
 /* shared style for the three editable number boxes */
 .param-ctrl input[type=number] {
   font-family: var(--mono);
-  font-size: 1rem;   /* 12px, was 11px */
+  font-size: 0.75rem;   /* 12px, was 11px */
   color: var(--text);
   background: var(--bg3);
   border: 1px solid var(--border);
@@ -146,9 +146,10 @@ h1 {
   color: var(--text2);
 }
 
-/* current-value box */
+/* current-value box — wide enough for a 3-digit, 3-decimal reading
+   (e.g. "300.000") without clipping */
 .param-ctrl input.p-val {
-  width: 64px;
+  width: 72px;
   color: var(--accent);
   font-weight: 600;
 }
@@ -239,7 +240,7 @@ h1 {
   color: #0d1117;
   border: none;
   border-radius: 6px;
-  font-size: 1.15rem;   /* 13px */
+  font-size: 0.8125rem;   /* 13px */
   font-weight: 600;
   cursor: pointer;
   display: inline-flex;
@@ -254,7 +255,7 @@ h1 {
 /* ── status bar ──────────────────────────────────────────────── */
 #status {
   font-family: var(--mono);
-  font-size: 1.2rem;   /* 13px, was 11px — this carries real numeric results */
+  font-size: 0.8125rem;   /* 13px, was 11px — this carries real numeric results */
   color: var(--text2);
   margin-top: 10px;
   min-height: 16px;
@@ -295,7 +296,7 @@ h1 {
 
 .plot-title {
   font-family: var(--mono);
-  font-size: 1.2rem;   /* 13px, was 12px */
+  font-size: 0.8125rem;   /* 13px, was 12px */
   color: var(--text2);
 }
 
@@ -311,7 +312,7 @@ canvas.main { display: block; width: 100%; aspect-ratio: 1; background: #080c14;
   align-items: center;
   gap: 8px;
   font-family: var(--mono);
-  font-size: 1.25rem;   /* 12px, was 11px */
+  font-size: 0.75rem;   /* 12px, was 11px */
 }
 
 .axis-lbl { color: var(--text2); width: 12px; }
