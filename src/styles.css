@@ -385,16 +385,22 @@ canvas.main { display: block; width: 100%; aspect-ratio: 1; background: #080c14;
 
 .help-eqn {
   font-family: var(--mono);
-  font-size: 0.8125rem;
+  font-size: 0.9375rem;   /* bumped up from body text — meant to be read closely, not scanned */
   color: var(--accent);
   background: var(--bg3);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 12px 14px;
-  margin-bottom: 10px;
+  padding: 14px 16px;
+  margin-bottom: 6px;
   white-space: pre-wrap;
   overflow-x: auto;
-  line-height: 1.6;
+  line-height: 1.9;
+}
+
+.help-eqn-note {
+  font-size: 0.75rem;
+  color: var(--text2);
+  margin-bottom: 10px;
 }
 
 .help-ref {
