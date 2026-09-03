@@ -91,6 +91,15 @@ struct LayerData {
     thickness: f64,
 }
 
+/// One layer's z-extent plus its I(ξ)/J(ξ) profile closure — compute_volume's
+/// working set, built once per layer and then sampled at many z per voxel row.
+struct LayerRange {
+    z0: f64,
+    z1: f64,
+    mua: f64,
+    profile: Box<dyn Fn(f64) -> (f64, f64)>,
+}
+
 fn layer_data(layers: &[KMLayerParams]) -> Vec<LayerData> {
     layers
         .iter()
@@ -203,12 +212,6 @@ pub fn compute_volume(p: &KubelkaMunkParams) -> (Vec<f32>, Vec<f32>) {
     let i0_top = p.p0 / (p.lx * p.ly);
     let mut i0 = i0_top;
     let mut z_start = 0.0;
-    struct LayerRange {
-        z0: f64,
-        z1: f64,
-        mua: f64,
-        profile: Box<dyn Fn(f64) -> (f64, f64)>,
-    }
     let mut layer_ranges: Vec<LayerRange> = Vec::with_capacity(layers.len());
 
     for (i, l) in layers.iter().enumerate() {
