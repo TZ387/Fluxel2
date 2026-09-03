@@ -81,7 +81,7 @@ h1 {
 .param-row { display: flex; flex-direction: column; gap: 4px; }
 
 .param-label {
-  font-size: 0.75rem;   /* 12px, was 11px */
+  font-size: 0.8125rem;   /* 13px — bumped up from 12px for readability */
   color: var(--text2);
   font-family: var(--mono);
 }
@@ -311,7 +311,7 @@ input[type=range]:focus-visible { box-shadow: 0 0 0 3px rgba(88,166,255,0.3); }
 
 .plot-title {
   font-family: var(--mono);
-  font-size: 0.8125rem;   /* 13px, was 12px */
+  font-size: 0.875rem;   /* 14px — bumped up from 13px for readability */
   color: var(--text2);
 }
 
