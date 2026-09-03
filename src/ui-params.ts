@@ -32,10 +32,26 @@ let repeatCounts: Record<string, number> = {};
    `prefix` namespaces element ids so repeated instances (layer 0,
    layer 1, ...) don't collide, e.g. "layers0-mua", "layers1-mua". */
 function buildParamGrid(params: ParamDef[], container: HTMLElement, prefix = ""): void {
+  const rows: { p: ParamDef; row: HTMLElement }[] = [];
+
   params.forEach((p) => {
     const uid = prefix + p.id;
     const row = document.createElement("div");
     row.className = "param-row";
+    rows.push({ p, row });
+
+    if (p.kind === "select") {
+      row.innerHTML = `
+        <div class="param-label">${p.label}</div>
+        <div class="param-ctrl">
+          <select id="${uid}" class="p-select">
+            ${p.options.map((o) => `<option value="${o.value}"${o.value === p.def ? " selected" : ""}>${o.label}</option>`).join("")}
+          </select>
+        </div>`;
+      container.appendChild(row);
+      return;
+    }
+
     row.innerHTML = `
       <div class="param-label">${p.label}</div>
       <div class="param-ctrl">
@@ -95,11 +111,28 @@ function buildParamGrid(params: ParamDef[], container: HTMLElement, prefix = "")
       }
     });
   });
+
+  /* Conditional visibility (showIf): wired after every row exists, since a
+     param can declare showIf on a sibling that's built later in the array. */
+  rows.forEach(({ p, row }) => {
+    if (p.kind === "select" || !p.showIf) return;
+    const controller = document.getElementById(prefix + p.showIf.id) as HTMLSelectElement | null;
+    if (!controller) return;
+    const sync = () => {
+      row.hidden = !p.showIf!.oneOf.includes(controller.value);
+    };
+    controller.addEventListener("change", sync);
+    sync();
+  });
 }
 
-function readParamGrid(params: ParamDef[], prefix = ""): Record<string, number> {
-  const r: Record<string, number> = {};
+function readParamGrid(params: ParamDef[], prefix = ""): Record<string, any> {
+  const r: Record<string, any> = {};
   params.forEach((p) => {
+    if (p.kind === "select") {
+      r[p.id] = (document.getElementById(`${prefix}${p.id}`) as HTMLSelectElement).value;
+      return;
+    }
     const vbox = document.getElementById(`${prefix}${p.id}-v`) as HTMLInputElement | null;
     const slider = document.getElementById(`${prefix}${p.id}`) as HTMLInputElement;
     r[p.id] = vbox ? +vbox.value : +slider.value;

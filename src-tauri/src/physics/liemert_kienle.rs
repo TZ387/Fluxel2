@@ -29,6 +29,7 @@
 //! (different but equally standard) polynomial fit, so both point-source
 //! models in this app treat the air-tissue boundary identically.
 
+use crate::physics::beam::{self, BeamProfile};
 use crate::physics::bessel::{j0, j0_zero, j1};
 use serde::{Deserialize, Serialize};
 
@@ -50,6 +51,10 @@ pub struct LiemertKienleParams {
     pub g2: f64,
     pub n2: f64,
     pub p0: f64,
+    /// "pencil" | "gaussian" | "flattop" — see beam.rs. `beam_width` is
+    /// sigma (Gaussian) or radius (flattop) in cm, ignored for "pencil".
+    pub beam_profile: String,
+    pub beam_width: f64,
     pub lx: f64,
     pub ly: f64,
     pub lz: f64,
@@ -169,6 +174,21 @@ pub fn check_validity(p: &LiemertKienleParams, derived: &LiemertKienleDerived) -
         ));
     }
 
+    let beam = BeamProfile::from_params(&p.beam_profile, p.beam_width);
+    if !beam.is_pencil() {
+        let footprint = beam.extent();
+        let cyl = cylinder_radius(p.lx, p.ly);
+        if footprint > 0.3 * cyl {
+            reasons.push(format!(
+                "beam footprint (~{:.3} cm) is a large fraction of the finite cylinder radius \
+                 used internally for the series solution ({:.3} cm) — the finite-beam \
+                 approximation assumes the beam sits well inside that artificial boundary; \
+                 shrink the beam width or enlarge L<sub>x</sub>/L<sub>y</sub>",
+                footprint, cyl
+            ));
+        }
+    }
+
     ValidityResult {
         valid: reasons.is_empty(),
         reasons,
@@ -269,18 +289,37 @@ fn build_root_table() -> RootTable {
     RootTable { roots, inv_j1_sq }
 }
 
+/// Consecutive below-tolerance terms required before fluence_kernel's series
+/// sum is considered converged (rather than just one). A plain pencil beam's
+/// terms already oscillate (via J0(sn*rho)) while decaying, and a flat-top
+/// beam's spectral factor 2*J1(x)/x oscillates on top of that — either can
+/// land an individual term near zero at a node without the sum having
+/// actually converged yet. Requiring a short run rather than a single small
+/// term makes that a non-issue at negligible extra cost (a handful of terms,
+/// against MAX_TERMS' budget of thousands).
+const CONVERGED_RUN: u32 = 3;
+
 /// Fluence at one (rho, z) point, in units where multiplying by p0 gives the
 /// actual fluence. Sums the Fourier-Bessel series (zeros of J0) until terms
-/// drop below a relative tolerance of the running sum.
-fn fluence_kernel(rho: f64, z: f64, g: &Geometry, roots: &RootTable) -> f64 {
+/// drop below a relative tolerance of the running sum. `beam` multiplies
+/// each mode by that beam's spectral factor (1.0 for Pencil, i.e. no-op) —
+/// see beam.rs for why this is the correct, exact-to-this-model's-own-
+/// approximation way to swap in a finite beam.
+fn fluence_kernel(rho: f64, z: f64, g: &Geometry, roots: &RootTable, beam: &BeamProfile) -> f64 {
     let mut sum = 0.0f64;
+    let mut converged_run = 0u32;
     for k in 0..MAX_TERMS {
         let sn = roots.roots[k] / g.a_prime;
         let green = if z <= g.t1 { green_top(sn, g, z) } else { green_bottom(sn, g, z) };
-        let term = (green * roots.inv_j1_sq[k]) * j0(sn * rho);
+        let term = (green * roots.inv_j1_sq[k]) * j0(sn * rho) * beam.spectral_factor(sn);
         sum += term;
         if term.abs() < REL_TOL * sum.abs().max(1e-300) {
-            break;
+            converged_run += 1;
+            if converged_run >= CONVERGED_RUN {
+                break;
+            }
+        } else {
+            converged_run = 0;
         }
     }
     sum / (std::f64::consts::PI * g.a_prime * g.a_prime)
@@ -299,8 +338,9 @@ fn cylinder_radius(lx: f64, ly: f64) -> f64 {
 /// distance from the beam axis and depth — never on the azimuthal angle, so
 /// rather than summing the series per voxel (nx*ny*nz times), it's summed
 /// once on a coalesced (rho, z) grid and every voxel bilinearly interpolates
-/// into that: exactly the same trick kubelka_munk.rs uses for its 1-D depth
-/// profile, extended by one dimension for this model's radial structure.
+/// into that, via beam::sample_axisymmetric_volume (shared with fpw1992.rs's
+/// own finite-beam path — both models reduce to exactly this shape once you
+/// have a Phi(rho, z) kernel in hand).
 pub fn compute_volume(p: &LiemertKienleParams) -> (Vec<f32>, Vec<f32>) {
     let l1 = layer_coeffs(p.mua1, p.mus1, p.g1, p.n1);
     let l2 = layer_coeffs(p.mua2, p.mus2, p.g2, p.n2);
@@ -310,60 +350,20 @@ pub fn compute_volume(p: &LiemertKienleParams) -> (Vec<f32>, Vec<f32>) {
     let a_prime = cylinder_radius(p.lx, p.ly) + l1.zb;
     let geom = Geometry { l1, l2, z0, t1, t2, a_prime };
     let roots = build_root_table();
-
-    let xs = p.lx / 2.0;
-    let ys = p.ly / 2.0;
-    let dx = p.lx / p.nx as f64;
-    let dy = p.ly / p.ny as f64;
+    let beam = beam::BeamProfile::from_params(&p.beam_profile, p.beam_width);
     let dz = p.lz / p.nz as f64;
 
-    // Radial sample axis: resolution matched to the finer lateral axis,
-    // spanning every rho a voxel could actually have.
-    let n_rho = p.nx.max(p.ny).max(2);
-    let rho_max = xs.max(p.lx - xs).hypot(ys.max(p.ly - ys)) * 1.0001;
-    let rho_step = rho_max / (n_rho - 1) as f64;
-
-    let mut table = vec![0f64; n_rho * p.nz];
-    for iz in 0..p.nz {
-        let z = (iz as f64 + 0.5) * dz;
-        for ir in 0..n_rho {
-            let rho = ir as f64 * rho_step;
-            table[ir * p.nz + iz] = fluence_kernel(rho, z, &geom, &roots);
-        }
-    }
-
-    let n = p.nx * p.ny * p.nz;
-    let mut phi = vec![0f32; n];
-    let mut abs = vec![0f32; n];
-
-    for ix in 0..p.nx {
-        let x = (ix as f64 + 0.5) * dx;
-        let rx2 = (x - xs) * (x - xs);
-        for iy in 0..p.ny {
-            let y = (iy as f64 + 0.5) * dy;
-            let rho = (rx2 + (y - ys) * (y - ys)).sqrt();
-
-            let rf = (rho / rho_step).min((n_rho - 1) as f64);
-            let ir0 = rf.floor() as usize;
-            let ir1 = (ir0 + 1).min(n_rho - 1);
-            let frac = rf - ir0 as f64;
-
-            for iz in 0..p.nz {
-                let z = (iz as f64 + 0.5) * dz;
-                let phi_lo = table[ir0 * p.nz + iz];
-                let phi_hi = table[ir1 * p.nz + iz];
-                let phi_kernel = phi_lo + (phi_hi - phi_lo) * frac;
-
-                let mua_here = if z <= t1 { l1.mua } else { l2.mua };
-                let val = p.p0 * phi_kernel;
-                let idx = ix + iy * p.nx + iz * p.nx * p.ny;
-                phi[idx] = val as f32;
-                abs[idx] = (mua_here * val) as f32;
-            }
-        }
-    }
-
-    (phi, abs)
+    beam::sample_axisymmetric_volume(
+        p.lx,
+        p.ly,
+        p.nx,
+        p.ny,
+        p.nz,
+        dz,
+        p.p0,
+        |z| if z <= t1 { l1.mua } else { l2.mua },
+        |rho, z| fluence_kernel(rho, z, &geom, &roots, &beam),
+    )
 }
 
 #[cfg(test)]
@@ -391,7 +391,9 @@ mod tests {
         let roots = build_root_table();
 
         let fpw_params = fpw1992::Fpw1992Params {
-            mua, mus, g, n, p0, lx, ly, lz, nx: 2, ny: 2, nz: 2,
+            mua, mus, g, n, p0,
+            beam_profile: "pencil".to_string(), beam_width: 0.0,
+            lx, ly, lz, nx: 2, ny: 2, nz: 2,
         };
         let fd = fpw1992::derived(&fpw_params);
         let reff = -1.44 / (n * n) + 0.71 / n + 0.668 + 0.0636 * n;
@@ -411,7 +413,7 @@ mod tests {
             for irho in 0..8 {
                 let z = iz as f64 * 0.25;
                 let rho = irho as f64 * 0.25;
-                let got = p0 * fluence_kernel(rho, z, &geom, &roots);
+                let got = p0 * fluence_kernel(rho, z, &geom, &roots, &BeamProfile::Pencil);
 
                 let r1 = (rho * rho + (z - z0_fpw).powi(2)).sqrt();
                 let r2 = (rho * rho + (z - zs_img).powi(2)).sqrt();
@@ -424,6 +426,80 @@ mod tests {
             }
         }
         assert!(max_rel_err < 0.03, "max_rel_err = {max_rel_err:.4}, want < 0.03");
+    }
+
+    /// A vanishingly narrow Gaussian's spectral factor is ~1 at every mode
+    /// this series actually sums (see beam.rs's own point-source limit
+    /// check), so it should reproduce the plain point-source kernel.
+    #[test]
+    fn narrow_gaussian_matches_pencil() {
+        let (mua, mus, g, n) = (0.1, 100.0, 0.9, 1.4);
+        let (lx, ly, lz) = (2.0, 2.0, 2.0);
+        let t1 = 0.3;
+
+        let l1 = layer_coeffs(mua, mus, g, n);
+        let l2 = layer_coeffs(0.3, 50.0, g, n);
+        let z0 = 1.0 / l1.musp;
+        let t2 = lz - t1;
+        let a_prime = cylinder_radius(lx, ly) + l1.zb;
+        let geom = Geometry { l1, l2, z0, t1, t2, a_prime };
+        let roots = build_root_table();
+
+        let pencil = BeamProfile::Pencil;
+        let narrow_gaussian = BeamProfile::Gaussian { sigma: 1e-7 };
+
+        for &(rho, z) in &[(0.0, 0.1), (0.2, 0.3), (0.1, 0.8)] {
+            let want = fluence_kernel(rho, z, &geom, &roots, &pencil);
+            let got = fluence_kernel(rho, z, &geom, &roots, &narrow_gaussian);
+            let rel_err = (got - want).abs() / want.abs();
+            assert!(rel_err < 1e-4, "(rho={rho}, z={z}): got {got}, want {want}");
+        }
+    }
+
+    fn beam_params(beam_profile: &str, beam_width: f64) -> LiemertKienleParams {
+        LiemertKienleParams {
+            mua1: 0.1, mus1: 100.0, g1: 0.9, n1: 1.4,
+            t1: 0.3,
+            mua2: 0.3, mus2: 50.0, g2: 0.9, n2: 1.4,
+            p0: 1.0,
+            beam_profile: beam_profile.to_string(), beam_width,
+            lx: 2.0, ly: 2.0, lz: 2.0,
+            nx: 20, ny: 20, nz: 20,
+        }
+    }
+
+    /// A flat-top beam wider than the ~0.3x-cylinder-radius threshold should
+    /// trip check_validity's finite-beam warning (see check_validity's own
+    /// comment for why that threshold exists); a beam well inside it, or a
+    /// plain pencil beam, should not.
+    #[test]
+    fn wide_beam_triggers_footprint_validity_warning() {
+        // cylinder_radius(2.0, 2.0) is about 2.12 cm, so a 1 cm flat-top
+        // radius (~47% of it) should trip the 30% threshold.
+        let wide = beam_params("flattop", 1.0);
+        let wide_derived = derived(&wide);
+        let wide_result = check_validity(&wide, &wide_derived);
+        assert!(!wide_result.valid, "wide flat-top beam should be flagged invalid");
+        assert!(
+            wide_result.reasons.iter().any(|r| r.contains("beam footprint")),
+            "expected a beam-footprint reason, got {:?}", wide_result.reasons
+        );
+
+        let narrow = beam_params("flattop", 0.05);
+        let narrow_derived = derived(&narrow);
+        let narrow_result = check_validity(&narrow, &narrow_derived);
+        assert!(
+            !narrow_result.reasons.iter().any(|r| r.contains("beam footprint")),
+            "narrow flat-top beam should not trip the footprint warning, got {:?}", narrow_result.reasons
+        );
+
+        let pencil = beam_params("pencil", 0.0);
+        let pencil_derived = derived(&pencil);
+        let pencil_result = check_validity(&pencil, &pencil_derived);
+        assert!(
+            !pencil_result.reasons.iter().any(|r| r.contains("beam footprint")),
+            "pencil beam should never trip the footprint warning, got {:?}", pencil_result.reasons
+        );
     }
 }
 
@@ -439,6 +515,7 @@ mod perf_and_sanity {
             t1: 0.3,
             mua2: 0.3, mus2: 50.0, g2: 0.9, n2: 1.4,
             p0: 1.0,
+            beam_profile: "pencil".to_string(), beam_width: 0.0,
             lx: 2.0, ly: 2.0, lz: 2.0,
             nx: 400, ny: 400, nz: 400,
         };

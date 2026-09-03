@@ -103,6 +103,7 @@ h1 {
 }
 
 .param-row { display: flex; flex-direction: column; gap: 4px; }
+.param-row[hidden] { display: none; }
 
 .param-label {
   font-size: 0.8125rem;   /* 13px — bumped up from 12px for readability */
@@ -177,6 +178,33 @@ input[type=range]:focus-visible { box-shadow: 0 0 0 3px rgba(88,166,255,0.3); }
   border-color: var(--accent);
   color: var(--accent);
 }
+
+.param-ctrl select.p-select {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--text);
+  background-color: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 22px 3px 4px;
+  outline: none;
+  cursor: pointer;
+  /* Tauri's Linux webview (WebKitGTK) otherwise paints this control with
+     native GTK widget chrome in some states, which can fight the explicit
+     color above and render the selected text almost invisible once the
+     control isn't focused/hovered — same reason input[type=range] above
+     goes appearance:none rather than trying to theme the native control. */
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238b949e' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+
+.param-ctrl select.p-select:hover { border-color: var(--text2); }
+.param-ctrl select.p-select:focus { border-color: var(--accent); color: var(--accent); }
 
 /* range-bound boxes (min / max) — sized in ch (monospace character
    width) rather than a px guess, so it fits whichever font in --mono's

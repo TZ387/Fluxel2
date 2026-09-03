@@ -43,7 +43,8 @@
    pick up new entries automatically — no other code needs to change.
    ================================================================ */
 
-export interface ParamDef {
+export interface SliderParamDef {
+  kind?: "slider";
   id: string;
   label: string;
   min: number;
@@ -51,7 +52,24 @@ export interface ParamDef {
   step: number;
   def: number;
   fmt: (v: number) => string;
+  /** Hide this row unless the named sibling select's value is one of `oneOf`. */
+  showIf?: { id: string; oneOf: string[] };
 }
+
+export interface SelectOption {
+  value: string;
+  label: string;
+}
+
+export interface SelectParamDef {
+  kind: "select";
+  id: string;
+  label: string;
+  options: SelectOption[];
+  def: string;
+}
+
+export type ParamDef = SliderParamDef | SelectParamDef;
 
 export interface RepeatSpec {
   min: number;
@@ -78,6 +96,24 @@ export interface ModelDef<D = any> {
    arrow function body — models are still free to define their own. */
 const fmt3 = (v: number) => v.toFixed(3);
 const fmt0 = (v: number) => v.toFixed(0);
+
+/* Shared by every point-source model's beam group (FPW1992, Liemert-Kienle)
+   — same three profile choices and width meaning everywhere, so defined
+   once rather than copy-pasted per model. See src-tauri/src/physics/beam.rs
+   for what each profile means physically. */
+const BEAM_PROFILE_PARAM: SelectParamDef = {
+  id: "beam_profile", label: "Beam profile", kind: "select", def: "pencil",
+  options: [
+    { value: "pencil", label: "Pencil (point source)" },
+    { value: "gaussian", label: "Gaussian" },
+    { value: "flattop", label: "Flat-top (disk)" },
+  ],
+};
+const BEAM_WIDTH_PARAM: SliderParamDef = {
+  id: "beam_width", label: "Beam width — σ (Gaussian) or R (flat-top) [cm]",
+  min: 0.001, max: 0.5, step: 0.001, def: 0.05, fmt: fmt3,
+  showIf: { id: "beam_profile", oneOf: ["gaussian", "flattop"] },
+};
 
 export interface Fpw1992Derived {
   musp: number;
@@ -145,6 +181,8 @@ export const MODELS: Record<string, ModelDef> = {
         title: "Beam & grid",
         params: [
           { id: "p0", label: "P<sub>0</sub> input power [W]", min: 0.01, max: 10, step: 0.001, def: 1.0, fmt: fmt3 },
+          BEAM_PROFILE_PARAM,
+          BEAM_WIDTH_PARAM,
           { id: "lx", label: "L<sub>x</sub> [cm]", min: 0.5, max: 6, step: 0.001, def: 2, fmt: fmt3 },
           { id: "ly", label: "L<sub>y</sub> [cm]", min: 0.5, max: 6, step: 0.001, def: 2, fmt: fmt3 },
           { id: "lz", label: "L<sub>z</sub> [cm]", min: 0.5, max: 6, step: 0.001, def: 2, fmt: fmt3 },
@@ -173,13 +211,15 @@ export const MODELS: Record<string, ModelDef> = {
           { id: "mus", label: "μ<sub>s</sub> scattering [cm⁻¹]", min: 1, max: 300, step: 0.001, def: 100, fmt: fmt3 },
           { id: "g", label: "g anisotropy factor", min: 0, max: 0.99, step: 0.001, def: 0.9, fmt: fmt3 },
           { id: "n", label: "n refractive index", min: 1.0, max: 1.7, step: 0.001, def: 1.4, fmt: fmt3 },
-          { id: "p0", label: "P<sub>0</sub> input power [W]", min: 0.01, max: 10, step: 0.001, def: 1.0, fmt: fmt3 },
         ],
       },
       {
-        id: "grid",
-        title: "Grid",
+        id: "beam",
+        title: "Beam & grid",
         params: [
+          { id: "p0", label: "P<sub>0</sub> input power [W]", min: 0.01, max: 10, step: 0.001, def: 1.0, fmt: fmt3 },
+          BEAM_PROFILE_PARAM,
+          BEAM_WIDTH_PARAM,
           { id: "lx", label: "L<sub>x</sub> [cm]", min: 0.5, max: 6, step: 0.001, def: 2, fmt: fmt3 },
           { id: "ly", label: "L<sub>y</sub> [cm]", min: 0.5, max: 6, step: 0.001, def: 2, fmt: fmt3 },
           { id: "lz", label: "L<sub>z</sub> [cm]", min: 0.5, max: 6, step: 0.001, def: 2, fmt: fmt3 },

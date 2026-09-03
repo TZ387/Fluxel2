@@ -45,6 +45,10 @@ const MODEL_HELP: ModelHelp[] = [
         "this one is instead a Fourier–Bessel series (a sum over zeros of J<sub>0</sub>) — too long to " +
         "reproduce here in full; see the reference paper, or this app's own " +
         "src-tauri/src/physics/liemert_kienle.rs for the complete, commented derivation.",
+      "The beam profile can be widened from an idealised pencil to a Gaussian or flat-top (disk) spot. Since " +
+        "each series term above is tied to one transverse spatial frequency, widening the beam only multiplies " +
+        "each term by that profile's own spectral factor (1 for a point source, decaying for a wider spot) — " +
+        "no change to the layered-medium part of the solution. See src-tauri/src/physics/beam.rs.",
     ],
     equation: "D&middot;&nabla;&sup2;&Phi; &minus; &mu;<sub>a</sub>&middot;&Phi; = &minus;S(r)",
     useFor:
@@ -58,6 +62,8 @@ const MODEL_HELP: ModelHelp[] = [
       "The beam's effective source point must fall within layer 1 — the app warns if layer 1 is too thin " +
         "(or scatters too weakly) for that.",
       "Same &mu;<sub>s</sub>'/&mu;<sub>a</sub> &gtrsim; 10-per-layer requirement as FPW1992, for the same reason.",
+      "A Gaussian or flat-top beam wider than roughly a third of the internal finite-cylinder radius stops " +
+        "being accurately convolved — the app warns when the beam footprint gets that large.",
     ],
     reference:
       "A. Liemert, A. Kienle, “Light diffusion in a turbid cylinder. II. Layered case,” " +
@@ -70,6 +76,10 @@ const MODEL_HELP: ModelHelp[] = [
         "turbid slab. The beam is modelled as an isotropic point source one transport mean free path below " +
         "the surface; a matching image source above the surface enforces the extrapolated (Robin) boundary " +
         "condition that accounts for the refractive-index mismatch at the surface.",
+      "The beam profile can be widened from that idealised pencil to a Gaussian or flat-top (disk) spot — " +
+        "evaluated as a direct 2-D numerical convolution of the point-source formula below with the chosen " +
+        "profile, since (unlike Liemert-Kienle) this model has no existing spatial-frequency series to fold " +
+        "the profile into. See src-tauri/src/physics/beam.rs.",
     ],
     equation:
       "&Phi;(r) = P<sub>0</sub> / (4&pi;D) &middot; [ exp(&minus;&mu;<sub>eff</sub>&middot;r<sub>1</sub>)/r<sub>1</sub> " +
@@ -91,8 +101,8 @@ const MODEL_HELP: ModelHelp[] = [
         "so light randomises direction many times before being absorbed.",
       "Needs the medium's smallest dimension to be several transport mean free paths, so a photon can scatter " +
         "many times before reaching a boundary.",
-      "Least accurate within about one transport mean free path of the source — a real beam has some finite " +
-        "width; this model idealises it as a single point.",
+      "Least accurate within about one transport mean free path of the source for the idealised pencil beam " +
+        "— switch to the Gaussian or flat-top profile if the real beam's width is comparable to that distance.",
     ],
     reference:
       "T. J. Farrell, M. S. Patterson, B. Wilson, “A diffusion theory model of spatially resolved, " +

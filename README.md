@@ -35,12 +35,17 @@ math).
   the symmetry that shortcut relies on. Not in upstream Fluxel — added here to fill the gap its own roadmap
   names below. `src-tauri/src/physics/liemert_kienle.rs`.
 
+Both point-source models (FPW1992 and Liemert & Kienle) also support widening their beam from an idealised
+pencil to a Gaussian or flat-top (disk) profile — the finite-beam convolution shared between them lives in
+`src-tauri/src/physics/beam.rs`. Liemert-Kienle folds the beam's profile into its existing Fourier-Bessel series
+as a per-mode spectral factor (cheap, exact to the model's own cylinder-radius approximation); FPW1992 has no
+such series, so its convolution is a direct 2-D numerical integral over the beam footprint instead.
+
 ## Roadmap
 
 Adapted from [Fluxel's own roadmap](https://github.com/TZ387/Fluxel#roadmap) — a reasonable source of next
 tasks if none is otherwise specified:
 
-- **Finite beams** — Gaussian/flat-top profiles for FPW1992, instead of just the infinitely thin pencil beam
 - **N > 2 layers under a point-source beam** — Liemert & Kienle covers two; a third (or arbitrary N) needs
   a middle-layer Green's function this port doesn't have (the reference implementation it's ported from
   doesn't either — see that model's own doc comment)
