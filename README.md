@@ -6,8 +6,8 @@ biological tissue (diffusion approximation) — into a Tauri desktop app, target
 Fluxel itself is a static HTML/CSS/vanilla-JS app with no build step; this project reworks it as a proper desktop
 build (TypeScript frontend + Rust backend via Tauri) rather than something you just open in a browser.
 
-Work in progress — the parameter UI, 3-slice volume renderer, and two of Fluxel's theoretical models are ported;
-see [AGENTS.md](AGENTS.md) for the current layout.
+Work in progress — the parameter UI, 3-slice volume renderer, and three theoretical models (two ported from
+Fluxel, one added beyond it) are in; see [AGENTS.md](AGENTS.md) for the current layout.
 
 ## AI-assisted development
 
@@ -29,6 +29,11 @@ math).
   across the whole top face, and two counter-propagating streams (up/down) are tracked through an arbitrary
   stack of homogeneous layers, each with its own absorption, scattering, and thickness. No lateral structure —
   the computed depth profile is broadcast across every (x, y) column. `src-tauri/src/physics/kubelka_munk.rs`.
+- **Liemert & Kienle (2010)** — two-layer, point-source diffusion. The combination FPW1992 and Kubelka-Munk
+  each stop short of: a point/pencil beam through two stacked homogeneous layers, solved via a Fourier-Bessel
+  series (zeros of J0) on a finite cylinder rather than FPW1992's closed-form shortcut, since layering breaks
+  the symmetry that shortcut relies on. Not in upstream Fluxel — added here to fill the gap its own roadmap
+  names below. `src-tauri/src/physics/liemert_kienle.rs`.
 
 ## Roadmap
 
@@ -36,8 +41,9 @@ Adapted from [Fluxel's own roadmap](https://github.com/TZ387/Fluxel#roadmap) —
 tasks if none is otherwise specified:
 
 - **Finite beams** — Gaussian/flat-top profiles for FPW1992, instead of just the infinitely thin pencil beam
-- **Layered tissue under a point-source beam** — Kubelka-Munk already handles multiple layers, but only under
-  diffuse illumination; a layered model under a point-source beam is still open
+- **N > 2 layers under a point-source beam** — Liemert & Kienle covers two; a third (or arbitrary N) needs
+  a middle-layer Green's function this port doesn't have (the reference implementation it's ported from
+  doesn't either — see that model's own doc comment)
 - **Structured light / scanning patterns** — multiple beam positions or a scanning trajectory
 - **Monte Carlo validation** — an optional MC reference run to cross-check the diffusion result. Unlike
   upstream Fluxel (which plans this via WebAssembly), this can be plain native Rust here, since Tauri already

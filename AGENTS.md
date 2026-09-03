@@ -9,10 +9,11 @@ light transport in biological tissue (diffusion approximation). Fluxel itself is
 HTML/CSS/vanilla-JS app; this project reworks it as a Tauri app (TypeScript frontend + Rust backend),
 targeting Linux and Windows as desktop platforms.
 
-The port is underway: two of Fluxel's theoretical models are implemented so far (Farrell-Patterson-Wilson
-1992 and Kubelka-Munk), with a schema-driven parameter UI and a canvas-based 3-slice volume renderer. See
-[README.md](README.md)'s Roadmap for what's not built yet — a reasonable source of next tasks if none is
-otherwise specified.
+The port is underway: two of Fluxel's theoretical models are implemented (Farrell-Patterson-Wilson 1992 and
+Kubelka-Munk), plus one added beyond upstream Fluxel (Liemert & Kienle 2010, two-layer point-source diffusion —
+see README.md's Models section for why), with a schema-driven parameter UI and a canvas-based 3-slice volume
+renderer. See [README.md](README.md)'s Roadmap for what's not built yet — a reasonable source of next tasks if
+none is otherwise specified.
 
 - `src/` — frontend (TypeScript, vanilla — no framework): `models.ts` (each model's parameter schema and
   defaults), `ui-params.ts` (renders any model's params generically from that schema), `render.ts` (the
