@@ -13,54 +13,66 @@
       <h1>Light Diffusion Simulator</h1>
       <p class="subtitle">Steady-state light transport in layered tissue</p>
 
-      <!-- ── parameter panel ───────────────────────────────────────── -->
-      <div class="panel">
-        <div class="panel-title">Model</div>
-        <div class="param-row" style="max-width: 820px">
-          <select id="model-select" class="model-select"></select>
-        </div>
+      <!-- ── tabs ──────────────────────────────────────────────────── -->
+      <div class="tab-bar">
+        <button type="button" class="tab-btn active" id="tab-btn-simulator">Simulator</button>
+        <button type="button" class="tab-btn" id="tab-btn-help">Help</button>
       </div>
 
-      <!-- Each model declares its own paramGroups (models.ts); this
-           container is torn down and rebuilt whenever the model changes,
-           so it stays empty in markup. -->
-      <div id="param-panels"></div>
-
-      <div class="panel">
-        <button id="run-btn">&#9654; Compute &amp; visualise</button>
-        <div id="status">Adjust parameters and click Compute.</div>
-      </div>
-
-      <!-- ── plots ─────────────────────────────────────────────────── -->
-      <div class="plots-row" id="plots" style="display: none">
-        <div class="plot-panel">
-          <div class="plot-title">Fluence &Phi; [W/cm&sup2;]</div>
-          <div class="canvas-wrap"><canvas class="main" id="cv-phi"></canvas></div>
-          <div class="axis-sliders" id="sl-phi"></div>
-          <div class="cbar-row">
-            <canvas class="cbar-canvas" id="cbar-phi" height="140"></canvas>
-            <div class="cbar-labels" id="clbl-phi">
-              <span id="clbl-phi-hi"></span>
-              <span id="clbl-phi-mid"></span>
-              <span id="clbl-phi-lo"></span>
-            </div>
+      <div id="tab-simulator">
+        <!-- ── parameter panel ─────────────────────────────────────── -->
+        <div class="panel">
+          <div class="panel-title">Model</div>
+          <div class="param-row" style="max-width: 820px">
+            <select id="model-select" class="model-select"></select>
           </div>
         </div>
 
-        <div class="plot-panel">
-          <div class="plot-title">Absorption A = &mu;<sub>a</sub> &middot; &Phi; [W/cm&sup3;]</div>
-          <div class="canvas-wrap"><canvas class="main" id="cv-abs"></canvas></div>
-          <div class="axis-sliders" id="sl-abs"></div>
-          <div class="cbar-row">
-            <canvas class="cbar-canvas" id="cbar-abs" height="140"></canvas>
-            <div class="cbar-labels" id="clbl-abs">
-              <span id="clbl-abs-hi"></span>
-              <span id="clbl-abs-mid"></span>
-              <span id="clbl-abs-lo"></span>
+        <!-- Each model declares its own paramGroups (models.ts); this
+             container is torn down and rebuilt whenever the model changes,
+             so it stays empty in markup. -->
+        <div id="param-panels"></div>
+
+        <div class="panel">
+          <button id="run-btn">&#9654; Compute &amp; visualise</button>
+          <div id="status">Adjust parameters and click Compute.</div>
+        </div>
+
+        <!-- ── plots ───────────────────────────────────────────────── -->
+        <div class="plots-row" id="plots" style="display: none">
+          <div class="plot-panel">
+            <div class="plot-title">Fluence &Phi; [W/cm&sup2;]</div>
+            <div class="canvas-wrap"><canvas class="main" id="cv-phi"></canvas></div>
+            <div class="axis-sliders" id="sl-phi"></div>
+            <div class="cbar-row">
+              <canvas class="cbar-canvas" id="cbar-phi" height="140"></canvas>
+              <div class="cbar-labels" id="clbl-phi">
+                <span id="clbl-phi-hi"></span>
+                <span id="clbl-phi-mid"></span>
+                <span id="clbl-phi-lo"></span>
+              </div>
+            </div>
+          </div>
+
+          <div class="plot-panel">
+            <div class="plot-title">Absorption A = &mu;<sub>a</sub> &middot; &Phi; [W/cm&sup3;]</div>
+            <div class="canvas-wrap"><canvas class="main" id="cv-abs"></canvas></div>
+            <div class="axis-sliders" id="sl-abs"></div>
+            <div class="cbar-row">
+              <canvas class="cbar-canvas" id="cbar-abs" height="140"></canvas>
+              <div class="cbar-labels" id="clbl-abs">
+                <span id="clbl-abs-hi"></span>
+                <span id="clbl-abs-mid"></span>
+                <span id="clbl-abs-lo"></span>
+              </div>
             </div>
           </div>
         </div>
       </div>
+
+      <!-- Populated once from help.ts — general usage plus one section per
+           model in models.ts (equations, use cases, limits, reference). -->
+      <div id="tab-help" style="display: none"></div>
     </div>
     <!-- /.app-shell -->
   </body>

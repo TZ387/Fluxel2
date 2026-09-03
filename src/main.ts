@@ -3,6 +3,7 @@ import { MODELS, buildModelSelect } from "./models";
 import { buildModelParams, getParams } from "./ui-params";
 import { drawSlices, drawColorbar } from "./render";
 import { runModel } from "./compute";
+import { buildHelp } from "./help";
 
 /* ================================================================
    SIMULATION STATE
@@ -234,8 +235,21 @@ function onModelChange(): void {
 }
 
 /* ================================================================
+   TABS
+   ================================================================ */
+function switchTab(tab: "simulator" | "help"): void {
+  (document.getElementById("tab-simulator") as HTMLElement).style.display = tab === "simulator" ? "" : "none";
+  (document.getElementById("tab-help") as HTMLElement).style.display = tab === "help" ? "" : "none";
+  document.getElementById("tab-btn-simulator")!.classList.toggle("active", tab === "simulator");
+  document.getElementById("tab-btn-help")!.classList.toggle("active", tab === "help");
+}
+document.getElementById("tab-btn-simulator")!.addEventListener("click", () => switchTab("simulator"));
+document.getElementById("tab-btn-help")!.addEventListener("click", () => switchTab("help"));
+
+/* ================================================================
    INIT
    ================================================================ */
 buildModelSelect();
 document.getElementById("model-select")!.addEventListener("change", onModelChange);
 onModelChange();
+buildHelp("tab-help");
