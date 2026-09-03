@@ -41,14 +41,15 @@ export function drawColorbar(
   vmax: number
 ): void {
   const cv = document.getElementById(cvId) as HTMLCanvasElement;
-  const h = 90;
+  const w = 20,
+    h = 140;
+  cv.width = w;
   cv.height = h;
-  cv.width = 14;
   const ctx = cv.getContext("2d")!;
   for (let i = 0; i < h; i++) {
     const [r, g, b] = colormap(1 - i / h);
     ctx.fillStyle = `rgb(${r},${g},${b})`;
-    ctx.fillRect(0, i, 14, 1);
+    ctx.fillRect(0, i, w, 1);
   }
   const fmtSci = (v: number) => {
     if (v === 0 || !isFinite(v)) return "0";

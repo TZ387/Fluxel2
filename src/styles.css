@@ -339,8 +339,8 @@ canvas.main { display: block; width: 100%; aspect-ratio: 1; background: #080c14;
 .axis-val { color: var(--accent); min-width: 30px; text-align: right; }
 
 /* ── colorbar ────────────────────────────────────────────────── */
-.cbar-row { display: flex; gap: 8px; align-items: stretch; }
-.cbar-canvas { width: 14px; border-radius: 3px; flex-shrink: 0; }
+.cbar-row { display: flex; gap: 10px; align-items: stretch; }
+.cbar-canvas { width: 20px; border-radius: 4px; border: 1px solid var(--border); flex-shrink: 0; }
 .cbar-labels {
   display: flex; flex-direction: column;
   justify-content: space-between;
