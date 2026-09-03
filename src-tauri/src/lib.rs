@@ -2,6 +2,7 @@ mod physics;
 
 use physics::fpw1992::{self, Fpw1992Derived, Fpw1992Params};
 use physics::kubelka_munk::{self, KubelkaMunkDerived, KubelkaMunkParams};
+use physics::liemert_kienle::{self, LiemertKienleDerived, LiemertKienleParams};
 use serde::Serialize;
 use tauri::ipc::Response;
 
@@ -60,6 +61,23 @@ fn kubelka_munk_volume(params: KubelkaMunkParams) -> Response {
     volume_bytes(phi, abs)
 }
 
+#[tauri::command(async)]
+fn liemert_kienle_summary(params: LiemertKienleParams) -> Summary<LiemertKienleDerived> {
+    let derived = liemert_kienle::derived(&params);
+    let validity = liemert_kienle::check_validity(&params, &derived);
+    Summary {
+        derived,
+        valid: validity.valid,
+        reasons: validity.reasons,
+    }
+}
+
+#[tauri::command(async)]
+fn liemert_kienle_volume(params: LiemertKienleParams) -> Response {
+    let (phi, abs) = liemert_kienle::compute_volume(&params);
+    volume_bytes(phi, abs)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -68,6 +86,8 @@ pub fn run() {
             fpw1992_volume,
             kubelka_munk_summary,
             kubelka_munk_volume,
+            liemert_kienle_summary,
+            liemert_kienle_volume,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
