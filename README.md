@@ -6,8 +6,44 @@ biological tissue (diffusion approximation) — into a Tauri desktop app, target
 Fluxel itself is a static HTML/CSS/vanilla-JS app with no build step; this project reworks it as a proper desktop
 build (TypeScript frontend + Rust backend via Tauri) rather than something you just open in a browser.
 
-Work in progress — the parameter UI, 3-slice volume renderer, and two of Fluxel's theoretical models
-(Farrell-Patterson-Wilson 1992, Kubelka-Munk) are ported; see [AGENTS.md](AGENTS.md) for the current layout.
+Work in progress — the parameter UI, 3-slice volume renderer, and two of Fluxel's theoretical models are ported;
+see [AGENTS.md](AGENTS.md) for the current layout.
+
+## AI-assisted development
+
+This project gives AI coding agents a fairly free hand — including letting them commit directly during some
+sessions, when explicitly authorized (see the commit convention in [AGENTS.md](AGENTS.md)). Keep that in mind
+when reading the code or commit history here.
+
+## Models
+
+Each model is self-contained in Rust under `src-tauri/src/physics/` — its compute, validity checks, and doc
+comments with the full derivation notes are the single source of truth (see that directory, not here, for the
+math).
+
+- **Farrell, Patterson & Wilson (1992)** — pencil beam, semi-infinite slab. A narrow collimated beam entering a
+  homogeneous tissue slab, modelled as a real + image point-source pair below the surface (accounting for the
+  refractive-index mismatch at the air-tissue boundary). Has genuine 3-D structure: fluence falls off radially
+  from where the beam enters. `src-tauri/src/physics/fpw1992.rs`.
+- **Kubelka-Munk** — two-flux, N-layer stack. A 1-D model: the sample is illuminated by a perfectly diffuse flux
+  across the whole top face, and two counter-propagating streams (up/down) are tracked through an arbitrary
+  stack of homogeneous layers, each with its own absorption, scattering, and thickness. No lateral structure —
+  the computed depth profile is broadcast across every (x, y) column. `src-tauri/src/physics/kubelka_munk.rs`.
+
+## Roadmap
+
+Adapted from [Fluxel's own roadmap](https://github.com/TZ387/Fluxel#roadmap) — a reasonable source of next
+tasks if none is otherwise specified:
+
+- **Finite beams** — Gaussian/flat-top profiles for FPW1992, instead of just the infinitely thin pencil beam
+- **Layered tissue under a point-source beam** — Kubelka-Munk already handles multiple layers, but only under
+  diffuse illumination; a layered model under a point-source beam is still open
+- **Structured light / scanning patterns** — multiple beam positions or a scanning trajectory
+- **Monte Carlo validation** — an optional MC reference run to cross-check the diffusion result. Unlike
+  upstream Fluxel (which plans this via WebAssembly), this can be plain native Rust here, since Tauri already
+  runs a Rust process
+- **Export** — download fluence/absorption volumes as CSV or HDF5
+- **Isosurface overlay** — 3D isosurface rendering on top of the slice views
 
 ## Development
 
