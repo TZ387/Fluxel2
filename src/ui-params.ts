@@ -58,7 +58,7 @@ function buildParamGrid(params: ParamDef[], container: HTMLElement, prefix = "")
 
     /* value box → slider (extend range if needed) */
     valBox.addEventListener("change", () => {
-      let v = +valBox.value;
+      const v = +valBox.value;
       if (!isFinite(v)) {
         valBox.value = p.fmt(+slider.value);
         return;

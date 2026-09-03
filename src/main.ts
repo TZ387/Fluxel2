@@ -102,6 +102,11 @@ function buildAxisSliders(containerId: string, suffix: VolumeKind): void {
   });
 }
 
+/** The ModelDef for whatever's currently picked in the model dropdown. */
+function selectedModel() {
+  return MODELS[(document.getElementById("model-select") as HTMLSelectElement).value];
+}
+
 function getSlice(suffix: VolumeKind): { ix: number; iy: number; iz: number } {
   return {
     ix: +(document.getElementById(`sx-${suffix}`) as HTMLInputElement).value,
@@ -169,7 +174,7 @@ document.getElementById("run-btn")!.addEventListener("click", async () => {
   btn.disabled = true;
   st.textContent = "Computing…";
 
-  const model = MODELS[(document.getElementById("model-select") as HTMLSelectElement).value];
+  const model = selectedModel();
 
   const t0 = performance.now();
   const { phi, abs, derived, valid, reasons } = await runModel(model.command, p);
@@ -222,7 +227,7 @@ document.getElementById("run-btn")!.addEventListener("click", async () => {
    different (or no longer valid) set of inputs.
    ================================================================ */
 function onModelChange(): void {
-  const model = MODELS[(document.getElementById("model-select") as HTMLSelectElement).value];
+  const model = selectedModel();
   buildModelParams(model, "param-panels");
   (document.getElementById("plots") as HTMLElement).style.display = "none";
   document.getElementById("status")!.textContent = "Adjust parameters and click Compute.";
