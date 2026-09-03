@@ -34,8 +34,11 @@ building on Windows (e.g. via CI with a build matrix), and likewise for Linux.
 
 ## Conventions
 
-- Commit messages: the repo owner (Tilen) makes all commits himself after reviewing changes. Don't run
-  `git add`/`git commit` — instead, propose a one-line commit message suggestion and let him commit it.
+- Commit messages: by default, the repo owner (Tilen) makes all commits himself after reviewing changes —
+  don't run `git add`/`git commit`; propose a one-line commit message suggestion and let him commit it
+  instead. He may explicitly authorize committing directly within a given conversation (e.g. "make the
+  commits yourself for this session"); treat that as a one-off grant for that conversation, not a standing
+  change to this default — go back to proposing messages once it ends.
 - Keep changes minimal and behavior-preserving unless asked otherwise; this is a small hobby-scale project —
   avoid speculative abstractions or new dependencies unless asked.
 - Don't commit `node_modules/`, `dist/`, or `src-tauri/target/` (already gitignored).
