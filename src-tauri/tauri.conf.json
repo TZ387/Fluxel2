@@ -15,7 +15,9 @@
       {
         "title": "Fluxel2",
         "width": 1280,
-        "height": 900
+        "height": 900,
+        "minWidth": 560,
+        "minHeight": 600
       }
     ],
     "security": {
