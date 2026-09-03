@@ -134,28 +134,29 @@ function redraw(suffix: VolumeKind): void {
    RESPONSIVE CANVAS RESIZE
    ================================================================
    The plot canvases are sized in JS (cv.width/height) to match their
-   rendered CSS pixel size, so they stay crisp at any zoom level. That
-   sizing previously only ran right after a compute or while dragging
-   an axis slider — so browser zoom (which fires a 'resize' event but
-   touches neither of those) left the canvases stale: blurry, wrongly
-   proportioned, or misaligned with their container. This listener
-   re-applies that sizing and redraws whenever the viewport changes,
-   which covers window resizing as well as zooming in/out.
+   rendered CSS pixel size, so they stay crisp at any zoom level. A
+   ResizeObserver on the canvases themselves — rather than a window
+   'resize' listener — catches every reason their box can change size
+   (window resize, browser zoom, the plots-row collapsing to a single
+   column) and already coalesces to at most one callback per frame, so
+   no manual debounce is needed; redraws stay live during a drag
+   instead of snapping in after the fact.
    ================================================================ */
-let resizeTimer: ReturnType<typeof setTimeout> | null = null;
-window.addEventListener("resize", () => {
+function syncCanvasSizes(): void {
+  ["cv-phi", "cv-abs"].forEach((id) => {
+    const cv = document.getElementById(id) as HTMLCanvasElement;
+    cv.width = cv.offsetWidth || 400;
+    cv.height = cv.offsetHeight || 400;
+  });
+}
+
+const canvasResizeObserver = new ResizeObserver(() => {
   if (!Simulation.hasData()) return;
-  if (resizeTimer) clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => {
-    ["cv-phi", "cv-abs"].forEach((id) => {
-      const cv = document.getElementById(id) as HTMLCanvasElement;
-      cv.width = cv.offsetWidth || 400;
-      cv.height = cv.offsetHeight || 400;
-    });
-    redraw("phi");
-    redraw("abs");
-  }, 120);
+  syncCanvasSizes();
+  redraw("phi");
+  redraw("abs");
 });
+["cv-phi", "cv-abs"].forEach((id) => canvasResizeObserver.observe(document.getElementById(id)!));
 
 /* ================================================================
    MAIN RUN HANDLER
@@ -184,11 +185,7 @@ document.getElementById("run-btn")!.addEventListener("click", async () => {
   buildAxisSliders("sl-abs", "abs");
 
   /* Resize canvases to match their rendered pixel width */
-  ["cv-phi", "cv-abs"].forEach((id) => {
-    const cv = document.getElementById(id) as HTMLCanvasElement;
-    cv.width = cv.offsetWidth || 400;
-    cv.height = cv.offsetHeight || 400;
-  });
+  syncCanvasSizes();
 
   redraw("phi");
   redraw("abs");
