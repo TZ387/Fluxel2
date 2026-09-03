@@ -6,7 +6,8 @@ biological tissue (diffusion approximation) — into a Tauri desktop app, target
 Fluxel itself is a static HTML/CSS/vanilla-JS app with no build step; this project reworks it as a proper desktop
 build (TypeScript frontend + Rust backend via Tauri) rather than something you just open in a browser.
 
-Work in progress — currently just the Tauri scaffold, porting hasn't started yet.
+Work in progress — the parameter UI, 3-slice volume renderer, and two of Fluxel's theoretical models
+(Farrell-Patterson-Wilson 1992, Kubelka-Munk) are ported; see [AGENTS.md](AGENTS.md) for the current layout.
 
 ## Development
 
