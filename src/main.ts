@@ -11,18 +11,25 @@ import { buildHelp } from "./help";
    Holds the most recent computed volumes plus the grid dimensions
    they were computed on, as an object rather than loose globals.
 
-   Each volume's log-scale transform and min/max are precomputed once
-   here rather than in redraw(), which runs on every axis-slider drag
-   and only changes which 2D slice is shown — redoing the full-volume
-   log10 pass per drag was wasted work (invisible at Fluxel's original
-   ≤80³ grids, not at the higher resolutions Rust now makes practical).
+   Only the min/max is precomputed per volume — one pass, no
+   allocation. The log10 the colour ramp works in is applied per
+   drawn pixel instead (render.ts). Precomputing log10 for every
+   voxel into a second array is the better trade at Fluxel's
+   original ≤80³ grids and the wrong one at the sizes Rust made
+   practical: of a 400³ volume's 64M voxels a redraw reads about
+   half a million, so that pass did over 100x more work than needed
+   (~1.8 s per volume) and doubled peak memory (an extra 512 MB
+   across the two). Per-pixel it costs ~25 ms a redraw instead.
    ================================================================ */
 type VolumeKind = "phi" | "abs";
 
 interface VolumeCache {
-  logData: Float32Array;
+  /** The volume as computed — a view onto the IPC buffer, never copied. */
+  data: Float32Array;
+  /** Raw bounds, for the colourbar's labels. */
   vmin: number;
   vmax: number;
+  /** The same bounds on the log scale the colour ramp works in. */
   logMin: number;
   logMax: number;
 }
@@ -35,15 +42,13 @@ function buildVolumeCache(vol: Float32Array): VolumeCache {
     if (vol[i] < vmin) vmin = vol[i];
   }
 
-  /* Use log scale for colormap normalisation — better shows dynamic range */
+  /* Log scale for the colormap — it shows the full dynamic range from
+     near the source to far from it. A volume that never goes positive has
+     no log range to speak of, so fall back to six decades below the peak. */
   const logMin = vmin > 0 ? Math.log10(vmin) : Math.log10(Math.max(vmax * 1e-6, 1e-30));
   const logMax = vmax > 0 ? Math.log10(vmax) : 0;
-  const logData = new Float32Array(vol.length);
-  for (let i = 0; i < vol.length; i++) {
-    logData[i] = vol[i] > 0 ? Math.log10(vol[i]) : logMin;
-  }
 
-  return { logData, vmin, vmax, logMin, logMax };
+  return { data: vol, vmin, vmax, logMin, logMax };
 }
 
 const Simulation = {
@@ -118,7 +123,7 @@ function redraw(suffix: VolumeKind): void {
 
   drawSlices(
     `cv-${suffix}`,
-    cache.logData,
+    cache.data,
     Simulation.nx,
     Simulation.ny,
     Simulation.nz,

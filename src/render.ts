@@ -69,6 +69,11 @@ export function drawColorbar(
      top-left:  YZ plane at voxel index ix  (axes: y horizontal, z vertical)
      top-right: XZ plane at voxel index iy  (axes: x horizontal, z vertical)
      bottom-left: XY plane at voxel index iz (axes: x horizontal, y vertical)
+
+   `vol` arrives as raw values and is log10-scaled at sample time, against
+   the [logMin, logMax] bounds main.ts derived from the whole volume. Only
+   the pixels actually drawn get transformed, which is a tiny fraction of a
+   large volume — see the note on Simulation in main.ts.
    ================================================================ */
 export function drawSlices(
   cvId: string,
@@ -79,8 +84,8 @@ export function drawSlices(
   ix: number,
   iy: number,
   iz: number,
-  vmin: number,
-  vmax: number
+  logMin: number,
+  logMax: number
 ): void {
   const cv = document.getElementById(cvId) as HTMLCanvasElement;
   const W = cv.width || cv.offsetWidth || 400;
@@ -101,18 +106,21 @@ export function drawSlices(
   iy = Math.max(0, Math.min(ny - 1, iy));
   iz = Math.max(0, Math.min(nz - 1, iz));
 
-  const range = vmax - vmin + 1e-30;
+  const range = logMax - logMin + 1e-30;
 
-  function getVoxel(x: number, y: number, z: number): number {
-    if (x < 0 || x >= nx || y < 0 || y >= ny || z < 0 || z >= nz) return vmin;
-    return vol[x + y * nx + z * nx * ny];
+  /* One voxel, already on the log scale the colour ramp works in.
+     Non-positive values (and anything out of bounds) sit at the bottom. */
+  function sampleLog(x: number, y: number, z: number): number {
+    if (x < 0 || x >= nx || y < 0 || y >= ny || z < 0 || z >= nz) return logMin;
+    const v = vol[x + y * nx + z * nx * ny];
+    return v > 0 ? Math.log10(v) : logMin;
   }
 
   /**
    * fillRect2D — rasterise one 2D slice into an ImageData region.
    * ox, oy  — canvas offset of top-left corner
    * rw, rh  — pixel dimensions on canvas
-   * sampleFn  — (col, row) → voxel value, col∈[0,cols-1], row∈[0,rows-1]
+   * sampleFn  — (col, row) → log-scaled voxel, col∈[0,cols-1], row∈[0,rows-1]
    * cols, rows  — voxel dimensions of this slice
    */
   function fillRect2D(
@@ -130,7 +138,7 @@ export function drawSlices(
       const vc = Math.min(rows - 1, Math.floor((py * rows) / rh));
       for (let px = 0; px < rw; px++) {
         const uc = Math.min(cols - 1, Math.floor((px * cols) / rw));
-        const t = (sampleFn(uc, vc) - vmin) / range;
+        const t = (sampleFn(uc, vc) - logMin) / range;
         const [r, g, b] = colormap(t);
         const i = (py * rw + px) * 4;
         d[i] = r;
@@ -150,17 +158,17 @@ export function drawSlices(
   /* Top-left: YZ slice at ix — horizontal=y, vertical=z */
   const tlX = PAD,
     tlY = PAD;
-  fillRect2D(tlX, tlY, HALF, VHALF, (c, r) => getVoxel(ix, c, r), ny, nz);
+  fillRect2D(tlX, tlY, HALF, VHALF, (c, r) => sampleLog(ix, c, r), ny, nz);
 
   /* Top-right: XZ slice at iy — horizontal=x, vertical=z */
   const trX = PAD * 2 + HALF,
     trY = PAD;
-  fillRect2D(trX, trY, HALF, VHALF, (c, r) => getVoxel(c, iy, r), nx, nz);
+  fillRect2D(trX, trY, HALF, VHALF, (c, r) => sampleLog(c, iy, r), nx, nz);
 
   /* Bottom-left: XY slice at iz — horizontal=x, vertical=y */
   const blX = PAD,
     blY = PAD * 2 + VHALF;
-  fillRect2D(blX, blY, HALF, VHALF, (c, r) => getVoxel(c, r, iz), nx, ny);
+  fillRect2D(blX, blY, HALF, VHALF, (c, r) => sampleLog(c, r, iz), nx, ny);
 
   /* Slice labels — a light halo (stroke) behind the dark fill keeps them
      legible against the colormap's own near-black low end, where plain
