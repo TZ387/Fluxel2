@@ -162,10 +162,23 @@ export function drawSlices(
     blY = PAD * 2 + VHALF;
   fillRect2D(blX, blY, HALF, VHALF, (c, r) => getVoxel(c, r, iz), nx, ny);
 
-  /* Slice labels */
+  /* Slice labels — a light halo (stroke) behind the dark fill keeps them
+     legible regardless of what's underneath: dark fill alone disappears
+     against the colormap's own near-black low end (e.g. a deep slice far
+     from the source), which plain fillText hit in practice. Baseline is
+     16px below each rect's top edge rather than 12px — the halo's own
+     width pushes its visible top above a 17px font's ascent, which at
+     +12 poked above the rect into the background gutter above it. */
   ctx.font = "bold 17px monospace";
-  ctx.fillStyle = "rgba(12, 13, 15, 0.65)";
-  ctx.fillText(`YZ  x = ${ix}`, tlX + 4, tlY + 12);
-  ctx.fillText(`XZ  y = ${iy}`, trX + 4, trY + 12);
-  ctx.fillText(`XY  z = ${iz}`, blX + 4, blY + 12);
+  ctx.lineJoin = "round";
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "rgba(255,255,255,0.55)";
+  ctx.fillStyle = "rgba(12,13,15,0.9)";
+  const label = (text: string, x: number, y: number) => {
+    ctx.strokeText(text, x, y);
+    ctx.fillText(text, x, y);
+  };
+  label(`YZ  x = ${ix}`, tlX + 4, tlY + 16);
+  label(`XZ  y = ${iy}`, trX + 4, trY + 16);
+  label(`XY  z = ${iz}`, blX + 4, blY + 16);
 }
