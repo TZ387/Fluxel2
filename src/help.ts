@@ -32,16 +32,20 @@ const MODEL_HELP: ModelHelp[] = [
   {
     modelId: "liemertKienle",
     description: [
-      "The point-source diffusion equation solved for two stacked homogeneous layers — the combination " +
+      "The point-source diffusion equation solved for a stack of homogeneous layers — the combination " +
         "FPW1992 (point source, one layer) and Kubelka-Munk (many layers, diffuse illumination) each stop " +
         "short of. The same governing equation as FPW1992 below, applied per layer with " +
         "D = 1/(3&mu;<sub>s</sub>') here (a different but equally standard convention from FPW1992's D), and " +
-        "matched across the interface with continuity of fluence and flux, plus an extrapolated boundary " +
-        "condition top and bottom.",
+        "matched across each interface with continuity of &Phi;/n&sup2; and of D&middot;d&Phi;/dz, plus an " +
+        "extrapolated boundary condition above the stack and below it.",
       "Layering breaks the spherical symmetry that gives FPW1992 its short closed-form solution below, so " +
         "this one is instead a Fourier–Bessel series (a sum over zeros of J<sub>0</sub>) — too long to " +
         "reproduce here in full; see the reference paper, or this app's own " +
         "src-tauri/src/physics/liemert_kienle.rs for the complete, commented derivation.",
+      "Each term of that series reduces to a 1-D problem in depth that any number of layers folds into: " +
+        "everything below a given depth reaches the layers above it only through a single reflection " +
+        "coefficient, accumulated bottom-up one layer at a time. So the stack can be 1 layer or 8 at " +
+        "essentially the same cost per voxel.",
       "The beam profile can be widened from an idealised pencil to a Gaussian or flat-top (disk) spot. Since " +
         "each series term above is tied to one transverse spatial frequency, widening the beam only multiplies " +
         "each term by that profile's own spectral factor (1 for a point source, decaying for a wider spot) — " +
@@ -49,18 +53,21 @@ const MODEL_HELP: ModelHelp[] = [
     ],
     equation: "D&middot;&nabla;&sup2;&Phi; &minus; &mu;<sub>a</sub>&middot;&Phi; = &minus;S(r)",
     useFor:
-      "A beam or point source through a two-layer medium where you need real lateral (not just depth) " +
-      "structure — skin's epidermis and dermis, a coating on a bulk substrate, a thin film on a different " +
-      "material below it.",
+      "A beam or point source through a layered medium where you need real lateral (not just depth) " +
+      "structure — skin's epidermis, dermis and subcutis, a coating on a bulk substrate, a thin film on a " +
+      "different material below it.",
     limits: [
-      "Exactly two layers in this implementation, not arbitrary N — the reference implementation this is " +
-        "ported from only provides the Green's functions for the top and bottom layer, not a middle layer for " +
-        "N&ge;3, so this doesn't claim more generality than what's actually been verified.",
       "The beam's effective source point must fall within layer 1 — the app warns if layer 1 is too thin " +
         "(or scatters too weakly) for that.",
+      "The stack is bounded by air at both ends, so the last layer's bottom is a zero-fluence boundary just " +
+        "like the top surface. Make it several penetration depths thick if you mean it as a semi-infinite " +
+        "substrate rather than a finite slab.",
       "Same &mu;<sub>s</sub>'/&mu;<sub>a</sub> &gtrsim; 10-per-layer requirement as FPW1992, for the same reason.",
       "A Gaussian or flat-top beam wider than roughly a third of the internal finite-cylinder radius stops " +
         "being accurately convolved — the app warns when the beam footprint gets that large.",
+      "The reference implementation this is ported from covers only the top and bottom layer, so the " +
+        "middle-layer Green's function is derived here rather than ported — it reproduces the ported " +
+        "two-layer form exactly, and is cross-checked against a direct numerical solve.",
     ],
     reference:
       "A. Liemert, A. Kienle, “Light diffusion in a turbid cylinder. II. Layered case,” " +

@@ -29,11 +29,15 @@ math).
   across the whole top face, and two counter-propagating streams (up/down) are tracked through an arbitrary
   stack of homogeneous layers, each with its own absorption, scattering, and thickness. No lateral structure —
   the computed depth profile is broadcast across every (x, y) column. `src-tauri/src/physics/kubelka_munk.rs`.
-- **Liemert & Kienle (2010)** — two-layer, point-source diffusion. The combination FPW1992 and Kubelka-Munk
-  each stop short of: a point/pencil beam through two stacked homogeneous layers, solved via a Fourier-Bessel
-  series (zeros of J0) on a finite cylinder rather than FPW1992's closed-form shortcut, since layering breaks
-  the symmetry that shortcut relies on. Not in upstream Fluxel — added here to fill the gap its own roadmap
-  names below. `src-tauri/src/physics/liemert_kienle.rs`.
+- **Liemert & Kienle (2010)** — N-layer, point-source diffusion. The combination FPW1992 and Kubelka-Munk
+  each stop short of: a point/pencil beam through a stack of homogeneous layers (1 to 8 of them), solved via a
+  Fourier-Bessel series (zeros of J0) on a finite cylinder rather than FPW1992's closed-form shortcut, since
+  layering breaks the symmetry that shortcut relies on. Each series term reduces to a 1-D problem in depth
+  that any number of layers folds into, via a bottom-up reflection-coefficient recursion — the reference
+  implementation this was ported from covers only the top and bottom layer, so that recursion (and with it the
+  middle-layer Green's function) is derived here, and checked both against the ported two-layer form and
+  against a direct numerical solve. Not in upstream Fluxel — added here to fill the gap its own roadmap named.
+  `src-tauri/src/physics/liemert_kienle.rs`.
 
 Both point-source models (FPW1992 and Liemert & Kienle) also support widening their beam from an idealised
 pencil to a Gaussian or flat-top (disk) profile — the finite-beam convolution shared between them lives in
@@ -46,9 +50,6 @@ such series, so its convolution is a direct 2-D numerical integral over the beam
 Adapted from [Fluxel's own roadmap](https://github.com/TZ387/Fluxel#roadmap) — a reasonable source of next
 tasks if none is otherwise specified:
 
-- **N > 2 layers under a point-source beam** — Liemert & Kienle covers two; a third (or arbitrary N) needs
-  a middle-layer Green's function this port doesn't have (the reference implementation it's ported from
-  doesn't either — see that model's own doc comment)
 - **Structured light / scanning patterns** — multiple beam positions or a scanning trajectory
 - **Monte Carlo validation** — an optional MC reference run to cross-check the diffusion result. Unlike
   upstream Fluxel (which plans this via WebAssembly), this can be plain native Rust here, since Tauri already

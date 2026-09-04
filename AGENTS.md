@@ -10,7 +10,7 @@ HTML/CSS/vanilla-JS app; this project reworks it as a Tauri app (TypeScript fron
 targeting Linux and Windows as desktop platforms.
 
 The port is underway: two of Fluxel's theoretical models are implemented (Farrell-Patterson-Wilson 1992 and
-Kubelka-Munk), plus one added beyond upstream Fluxel (Liemert & Kienle 2010, two-layer point-source diffusion —
+Kubelka-Munk), plus one added beyond upstream Fluxel (Liemert & Kienle 2010, N-layer point-source diffusion —
 see README.md's Models section for why), with a schema-driven parameter UI and a canvas-based 3-slice volume
 renderer. See [README.md](README.md)'s Roadmap for what's not built yet — a reasonable source of next tasks if
 none is otherwise specified.

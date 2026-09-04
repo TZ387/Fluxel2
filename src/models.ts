@@ -19,6 +19,8 @@
      Repeating group: { id, title, params: [...], repeat: {min, max, def} }
        → rendered as `def` instances with add/remove buttons (bounded
          by min/max); comes back as an array, e.g. p.layers = [{...}, {...}].
+         `repeat.defs` optionally gives the first instances their own
+         starting values, so the stack can open non-uniform.
 
    To add a model: add a Rust module under src-tauri/src/physics/ with
    derived(), check_validity(), compute_volume() (see fpw1992.rs /
@@ -60,6 +62,11 @@ export interface RepeatSpec {
   min: number;
   max: number;
   def: number;
+  /** Starting values for the first instances, keyed by param id, so a model
+      can open with a *contrasting* stack rather than N identical layers.
+      Later instances fall back to each param's own `def`; values must lie
+      inside that param's [min, max]. */
+  defs?: Record<string, number | string>[];
 }
 
 export interface ParamGroup {
@@ -114,51 +121,56 @@ export interface KubelkaMunkDerived {
   Lz: number;
 }
 
+export interface LiemertKienleLayerDerived {
+  musp: number;
+  D: number;
+  mueff: number;
+}
+
 export interface LiemertKienleDerived {
-  musp1: number;
-  D1: number;
-  mueff1: number;
-  musp2: number;
-  D2: number;
-  mueff2: number;
+  layers: LiemertKienleLayerDerived[];
   z0: number;
+  Lz: number;
 }
 
 export const MODELS: Record<string, ModelDef> = {
   liemertKienle: {
-    label: "Liemert & Kienle (2010) — two-layer, point-source diffusion",
+    label: "Liemert & Kienle (2010) — N-layer, point-source diffusion",
     command: "liemert_kienle",
     summaryLine: (derived: LiemertKienleDerived, dt: string) =>
-      `Done in ${dt} ms — μ<sub>s1</sub>' = ${derived.musp1.toFixed(3)} cm⁻¹ | ` +
-      `D<sub>1</sub> = ${derived.D1.toFixed(4)} cm | μ<sub>eff,1</sub> = ${derived.mueff1.toFixed(4)} cm⁻¹ | ` +
-      `z<sub>0</sub> = ${derived.z0.toFixed(3)} cm | μ<sub>eff,2</sub> = ${derived.mueff2.toFixed(4)} cm⁻¹`,
+      `Done in ${dt} ms — ${derived.layers.length} layer${derived.layers.length === 1 ? "" : "s"} | ` +
+      `z<sub>0</sub> = ${derived.z0.toFixed(3)} cm | L<sub>z</sub> = ${derived.Lz.toFixed(3)} cm | ` +
+      `μ<sub>s</sub>' = ${derived.layers.map((l) => l.musp.toFixed(2)).join(", ")} cm⁻¹ | ` +
+      `μ<sub>eff</sub> = ${derived.layers.map((l) => l.mueff.toFixed(3)).join(", ")} cm⁻¹`,
 
-    /* Point source (pencil beam) through two stacked homogeneous layers —
+    /* Point source (pencil beam) through a stack of homogeneous layers —
        the combination FPW1992 (point source, one layer) and Kubelka-Munk
-       (many layers, diffuse illumination) each stop short of. Layer 1's
-       thickness is its own parameter; layer 2 implicitly fills the rest of
-       the grid, [t1, Lz], same as how Kubelka-Munk's last layer just runs
-       to whatever depth the stack's total thickness works out to. */
+       (many layers, diffuse illumination) each stop short of. Every layer
+       has its own thickness, so the grid's depth is the stack's total depth
+       (reported as L_z), same as Kubelka-Munk. */
     paramGroups: [
       {
-        id: "layer1",
-        title: "Layer 1 (top)",
+        id: "layers",
+        title: "Layers (top → bottom)",
+        /* Opens on a thin, strongly scattering top layer over a
+           weaker-scattering bulk — the same default this model had when it
+           was two-layer-only. Layers added by hand start from the sliders'
+           own defs. */
+        repeat: {
+          min: 1,
+          max: 8,
+          def: 2,
+          defs: [
+            { mua: 0.1, mus: 100, g: 0.9, n: 1.4, thickness: 0.3 },
+            { mua: 0.1, mus: 50, g: 0.9, n: 1.4, thickness: 1.7 },
+          ],
+        },
         params: [
-          { id: "mua1", label: "μ<sub>a1</sub> absorption [cm⁻¹]", min: 0.01, max: 5, step: 0.001, def: 0.1, fmt: fmt3 },
-          { id: "mus1", label: "μ<sub>s1</sub> scattering [cm⁻¹]", min: 1, max: 300, step: 0.001, def: 100, fmt: fmt3 },
-          { id: "g1", label: "g<sub>1</sub> anisotropy factor", min: 0, max: 0.99, step: 0.001, def: 0.9, fmt: fmt3 },
-          { id: "n1", label: "n<sub>1</sub> refractive index", min: 1.0, max: 1.7, step: 0.001, def: 1.4, fmt: fmt3 },
-          { id: "t1", label: "thickness [cm]", min: 0.01, max: 2, step: 0.001, def: 0.3, fmt: fmt3 },
-        ],
-      },
-      {
-        id: "layer2",
-        title: "Layer 2 (bottom, fills the rest of the grid)",
-        params: [
-          { id: "mua2", label: "μ<sub>a2</sub> absorption [cm⁻¹]", min: 0.01, max: 5, step: 0.001, def: 0.1, fmt: fmt3 },
-          { id: "mus2", label: "μ<sub>s2</sub> scattering [cm⁻¹]", min: 1, max: 300, step: 0.001, def: 50, fmt: fmt3 },
-          { id: "g2", label: "g<sub>2</sub> anisotropy factor", min: 0, max: 0.99, step: 0.001, def: 0.9, fmt: fmt3 },
-          { id: "n2", label: "n<sub>2</sub> refractive index", min: 1.0, max: 1.7, step: 0.001, def: 1.4, fmt: fmt3 },
+          { id: "mua", label: "μ<sub>a</sub> absorption [cm⁻¹]", min: 0.01, max: 5, step: 0.001, def: 0.1, fmt: fmt3 },
+          { id: "mus", label: "μ<sub>s</sub> scattering [cm⁻¹]", min: 1, max: 300, step: 0.001, def: 100, fmt: fmt3 },
+          { id: "g", label: "g anisotropy factor", min: 0, max: 0.99, step: 0.001, def: 0.9, fmt: fmt3 },
+          { id: "n", label: "n refractive index", min: 1.0, max: 1.7, step: 0.001, def: 1.4, fmt: fmt3 },
+          { id: "thickness", label: "thickness [cm]", min: 0.01, max: 3, step: 0.001, def: 0.5, fmt: fmt3 },
         ],
       },
       {
@@ -170,10 +182,9 @@ export const MODELS: Record<string, ModelDef> = {
           BEAM_WIDTH_PARAM,
           { id: "lx", label: "L<sub>x</sub> [cm]", min: 0.5, max: 6, step: 0.001, def: 2, fmt: fmt3 },
           { id: "ly", label: "L<sub>y</sub> [cm]", min: 0.5, max: 6, step: 0.001, def: 2, fmt: fmt3 },
-          { id: "lz", label: "L<sub>z</sub> [cm]", min: 0.5, max: 6, step: 0.001, def: 2, fmt: fmt3 },
           { id: "nx", label: "N<sub>x</sub> voxels", min: 10, max: 400, step: 1, def: 40, fmt: fmt0 },
           { id: "ny", label: "N<sub>y</sub> voxels", min: 10, max: 400, step: 1, def: 40, fmt: fmt0 },
-          { id: "nz", label: "N<sub>z</sub> voxels", min: 10, max: 400, step: 1, def: 40, fmt: fmt0 },
+          { id: "nz", label: "N<sub>z</sub> voxels (through depth)", min: 10, max: 400, step: 1, def: 40, fmt: fmt0 },
         ],
       },
     ],

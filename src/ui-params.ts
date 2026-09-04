@@ -24,8 +24,15 @@ let repeatCounts: Record<string, number> = {};
 
 /* ── one param-grid's worth of rows ────────────────────────────
    `prefix` namespaces element ids so repeated instances (layer 0,
-   layer 1, ...) don't collide, e.g. "layers0-mua", "layers1-mua". */
-function buildParamGrid(params: ParamDef[], container: HTMLElement, prefix = ""): void {
+   layer 1, ...) don't collide, e.g. "layers0-mua", "layers1-mua".
+   `defs` overrides this instance's starting values (see RepeatSpec.defs
+   in models.ts). */
+function buildParamGrid(
+  params: ParamDef[],
+  container: HTMLElement,
+  prefix = "",
+  defs: Record<string, number | string> = {}
+): void {
   const rows: { p: ParamDef; row: HTMLElement }[] = [];
 
   params.forEach((p) => {
@@ -35,24 +42,26 @@ function buildParamGrid(params: ParamDef[], container: HTMLElement, prefix = "")
     rows.push({ p, row });
 
     if (p.kind === "select") {
+      const def = String(defs[p.id] ?? p.def);
       row.innerHTML = `
         <div class="param-label">${p.label}</div>
         <div class="param-ctrl">
           <select id="${uid}" class="p-select">
-            ${p.options.map((o) => `<option value="${o.value}"${o.value === p.def ? " selected" : ""}>${o.label}</option>`).join("")}
+            ${p.options.map((o) => `<option value="${o.value}"${o.value === def ? " selected" : ""}>${o.label}</option>`).join("")}
           </select>
         </div>`;
       container.appendChild(row);
       return;
     }
 
+    const def = Number(defs[p.id] ?? p.def);
     row.innerHTML = `
       <div class="param-label">${p.label}</div>
       <div class="param-ctrl">
         <input type="number" class="p-bound" id="${uid}-min" value="${p.min}" step="${p.step}" title="Slider minimum">
-        <input type="range"  id="${uid}"     min="${p.min}" max="${p.max}" step="${p.step}" value="${p.def}">
+        <input type="range"  id="${uid}"     min="${p.min}" max="${p.max}" step="${p.step}" value="${def}">
         <input type="number" class="p-bound" id="${uid}-max" value="${p.max}" step="${p.step}" title="Slider maximum">
-        <input type="number" class="p-val"   id="${uid}-v"   value="${p.fmt(p.def)}" step="${p.step}" title="Current value" readonly>
+        <input type="number" class="p-val"   id="${uid}-v"   value="${p.fmt(def)}" step="${p.step}" title="Current value" readonly>
       </div>`;
     container.appendChild(row);
 
@@ -153,7 +162,7 @@ function renderRepeatGroup(group: ParamGroup, container: HTMLElement): void {
     const grid = document.createElement("div");
     grid.className = "param-grid";
     inst.appendChild(grid);
-    buildParamGrid(group.params, grid, `${group.id}${i}-`);
+    buildParamGrid(group.params, grid, `${group.id}${i}-`, spec.defs?.[i]);
     container.appendChild(inst);
 
     inst.querySelector(".repeat-remove-btn")!.addEventListener("click", () => {
