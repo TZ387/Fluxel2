@@ -26,6 +26,16 @@ interface ModelHelp {
   reference: string;
 }
 
+/* Both point-source models take the same beam pattern, described the same
+   way, so the paragraph is written once. */
+const PATTERN_PARAGRAPH =
+  "The beam can also be aimed at more than one spot: a line (what a scanner lays down as it sweeps — a row " +
+  "of discrete pulses, which approaches a continuous sweep once the pitch is small next to the beam width) " +
+  "or a square grid (a fractional handpiece's array of microbeams). P<sub>0</sub> stays the pattern's total " +
+  "power, so the spots share it equally, and the diffusion equation being linear means the result is simply " +
+  "their fluences added up. The per-spot field is computed once and reused at every spot, so a 25-spot grid " +
+  "costs barely more than a single spot rather than 25 times as much.";
+
 /* Ordered to match the dropdown — newest/most general (and default)
    model first — rather than publication year. */
 const MODEL_HELP: ModelHelp[] = [
@@ -50,6 +60,7 @@ const MODEL_HELP: ModelHelp[] = [
         "each series term above is tied to one transverse spatial frequency, widening the beam only multiplies " +
         "each term by that profile's own spectral factor (1 for a point source, decaying for a wider spot) — " +
         "no change to the layered-medium part of the solution. See src-tauri/src/physics/beam.rs.",
+      PATTERN_PARAGRAPH,
     ],
     equation: "D&middot;&nabla;&sup2;&Phi; &minus; &mu;<sub>a</sub>&middot;&Phi; = &minus;S(r)",
     useFor:
@@ -65,6 +76,9 @@ const MODEL_HELP: ModelHelp[] = [
       "Same &mu;<sub>s</sub>'/&mu;<sub>a</sub> &gtrsim; 10-per-layer requirement as FPW1992, for the same reason.",
       "A Gaussian or flat-top beam wider than roughly a third of the internal finite-cylinder radius stops " +
         "being accurately convolved — the app warns when the beam footprint gets that large.",
+      "A beam pattern is steady-state superposition, not a time sequence: every spot is on at once. That is " +
+        "the right picture for a scan much faster than the tissue's thermal and optical response, not for " +
+        "pulses far enough apart to be treated separately.",
       "The reference implementation this is ported from covers only the top and bottom layer, so the " +
         "middle-layer Green's function is derived here rather than ported — it reproduces the ported " +
         "two-layer form exactly, and is cross-checked against a direct numerical solve.",
@@ -84,6 +98,7 @@ const MODEL_HELP: ModelHelp[] = [
         "evaluated as a direct 2-D numerical convolution of the point-source formula below with the chosen " +
         "profile, since (unlike Liemert-Kienle) this model has no existing spatial-frequency series to fold " +
         "the profile into. See src-tauri/src/physics/beam.rs.",
+      PATTERN_PARAGRAPH,
     ],
     equation:
       "&Phi;(r) = P<sub>0</sub> / (4&pi;D) &middot; [ exp(&minus;&mu;<sub>eff</sub>&middot;r<sub>1</sub>)/r<sub>1</sub> " +
@@ -107,6 +122,9 @@ const MODEL_HELP: ModelHelp[] = [
         "many times before reaching a boundary.",
       "Least accurate within about one transport mean free path of the source for the idealised pencil beam " +
         "— switch to the Gaussian or flat-top profile if the real beam's width is comparable to that distance.",
+      "A beam pattern is steady-state superposition, not a time sequence: every spot is on at once. That is " +
+        "the right picture for a scan much faster than the tissue's thermal and optical response, not for " +
+        "pulses far enough apart to be treated separately.",
     ],
     reference:
       "T. J. Farrell, M. S. Patterson, B. Wilson, “A diffusion theory model of spatially resolved, " +

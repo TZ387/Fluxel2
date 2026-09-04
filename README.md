@@ -45,12 +45,16 @@ pencil to a Gaussian or flat-top (disk) profile — the finite-beam convolution 
 as a per-mode spectral factor (cheap, exact to the model's own cylinder-radius approximation); FPW1992 has no
 such series, so its convolution is a direct 2-D numerical integral over the beam footprint instead.
 
+Both also take a beam *pattern* — a single spot, a line (a scanner's row of pulses), or a square grid (a
+fractional handpiece's array) — sharing P0 equally between the spots and superposing their fields, which
+diffusion being linear makes exact. The per-spot field is the same function at every spot, just shifted, so it
+is evaluated once and reused: a 25-spot grid costs under twice a single spot, not 25 times.
+
 ## Roadmap
 
 Adapted from [Fluxel's own roadmap](https://github.com/TZ387/Fluxel#roadmap) — a reasonable source of next
 tasks if none is otherwise specified:
 
-- **Structured light / scanning patterns** — multiple beam positions or a scanning trajectory
 - **Monte Carlo validation** — an optional MC reference run to cross-check the diffusion result. Unlike
   upstream Fluxel (which plans this via WebAssembly), this can be plain native Rust here, since Tauri already
   runs a Rust process

@@ -29,6 +29,15 @@
 //! forms — Gaussian: exp(-s^2 sigma^2/2); flat-top disk of radius R:
 //! 2*J1(sR)/(sR) — both -> 1 as the beam narrows, recovering the point
 //! source (a useful sanity check on the algebra).
+//!
+//! Where the beam is *aimed* is separate from its shape: a BeamPattern is a
+//! list of spot positions on the top face — one spot, a row laid down by a
+//! scanner, or the array a fractional handpiece delivers. Diffusion is
+//! linear, so a pattern's fluence is the sum of its spots', each carrying an
+//! equal share of P0. Since Phi_pt is the same function for every spot, only
+//! shifted, the expensive part (Liemert-Kienle's series, FPW1992's
+//! convolution) is still evaluated exactly once — a pattern only costs extra
+//! table lookups per voxel, not extra kernel evaluations.
 
 use crate::physics::bessel::j1;
 
@@ -110,41 +119,132 @@ impl BeamProfile {
     }
 }
 
+/// Where the beam is aimed on the top face: the offsets, from the centre of
+/// that face, of every spot the pattern delivers. See this module's doc
+/// comment for why a whole pattern costs no more kernel evaluations than one
+/// spot does.
+#[derive(Clone)]
+pub struct BeamPattern {
+    spots: Vec<(f64, f64)>,
+}
+
+impl BeamPattern {
+    /// `kind` is the UI's beam-pattern selector value; `count` is the number
+    /// of spots along a line, or per side of a grid (so a grid has count^2),
+    /// and `spacing` is the pitch between neighbours in cm. Both are ignored
+    /// for "single", and an unknown `kind` falls back to it — same reasoning
+    /// as BeamProfile::from_params.
+    ///
+    /// A line is what a scanner actually lays down: a row of discrete pulses,
+    /// which approximates a continuous sweep once the pitch is small next to
+    /// the beam width.
+    pub fn from_params(kind: &str, count: usize, spacing: f64) -> BeamPattern {
+        let n = count.max(1);
+        let offset = |i: usize| (i as f64 - (n - 1) as f64 / 2.0) * spacing;
+        let spots = match kind {
+            "line" => (0..n).map(|i| (offset(i), 0.0)).collect(),
+            "grid" => (0..n).flat_map(|iy| (0..n).map(move |ix| (offset(ix), offset(iy)))).collect(),
+            _ => vec![(0.0, 0.0)],
+        };
+        BeamPattern { spots }
+    }
+
+    pub fn single() -> BeamPattern {
+        BeamPattern { spots: vec![(0.0, 0.0)] }
+    }
+
+    pub fn len(&self) -> usize {
+        self.spots.len()
+    }
+
+    pub fn is_single(&self) -> bool {
+        self.spots.len() == 1
+    }
+
+    /// Half-widths of the pattern's bounding box, for validity checks.
+    pub fn half_extent(&self) -> (f64, f64) {
+        self.spots.iter().fold((0.0f64, 0.0f64), |(mx, my), &(x, y)| (mx.max(x.abs()), my.max(y.abs())))
+    }
+}
+
+/// The largest distance from any spot to any corner of the grid's footprint —
+/// how far out the axisymmetric kernel has to be evaluated, and (for
+/// liemert_kienle.rs) how far out its artificial cylinder wall has to sit.
+/// Reduces to half the grid's diagonal for a single centred spot.
+pub fn max_kernel_radius(lx: f64, ly: f64, pattern: &BeamPattern) -> f64 {
+    let (hx, hy) = pattern.half_extent();
+    (hx + lx / 2.0).hypot(hy + ly / 2.0)
+}
+
+/// Shared by both point-source models' check_validity: spots outside the
+/// grid's footprint still light it up, but the user can't see them.
+pub fn pattern_extent_warning(pattern: &BeamPattern, lx: f64, ly: f64) -> Option<String> {
+    let (hx, hy) = pattern.half_extent();
+    if hx <= lx / 2.0 && hy <= ly / 2.0 {
+        return None;
+    }
+    Some(format!(
+        "the beam pattern reaches {:.3} x {:.3} cm from the centre, past the grid's half-width \
+         ({:.3} x {:.3} cm) — the spots that fall outside still deposit light into the volume, \
+         but you can't see them; enlarge L<sub>x</sub>/L<sub>y</sub>, or reduce the spot \
+         spacing or count",
+        hx, hy, lx / 2.0, ly / 2.0
+    ))
+}
+
+/// The voxel grid a volume is sampled onto — bundled rather than passed as a
+/// long run of positional numbers, since both models carry the same fields.
+pub struct Grid {
+    pub lx: f64,
+    pub ly: f64,
+    pub nx: usize,
+    pub ny: usize,
+    pub nz: usize,
+    pub dz: f64,
+}
+
 const N_RHO_QUAD: usize = 24;
 const N_THETA_QUAD: usize = 16;
 
 /// Builds an nx*ny*nz (phi, abs) volume from an axisymmetric fluence kernel
 /// `kernel_at(rho, z)` (per unit p0): evaluate it on a coalesced (rho, z)
-/// table, then bilinearly interpolate (rho only — z is exact) out to every
-/// voxel, scaling by p0 and by `mua_at(z)` for the absorption channel.
-/// Shared by fpw1992.rs's finite-beam path and liemert_kienle.rs, since both
-/// reduce to this shape once Phi(rho, z) is in hand.
+/// table, then, for every voxel, sum one interpolated lookup per spot in the
+/// pattern, scaling by each spot's share of p0 and by `mua_at(z)` for the
+/// absorption channel. Shared by fpw1992.rs's finite-beam path and
+/// liemert_kienle.rs, since both reduce to this shape once Phi(rho, z) is in
+/// hand.
+///
+/// The table is built once no matter how many spots there are — only the
+/// lookups repeat — and the per-spot radial index is worked out per (x, y)
+/// column rather than per voxel, so the innermost loop is a contiguous
+/// accumulate over z that vectorizes.
 pub fn sample_axisymmetric_volume(
-    lx: f64,
-    ly: f64,
-    nx: usize,
-    ny: usize,
-    nz: usize,
-    dz: f64,
+    grid: &Grid,
+    pattern: &BeamPattern,
     p0: f64,
     mua_at: impl Fn(f64) -> f64,
     kernel_at: impl Fn(f64, f64) -> f64,
 ) -> (Vec<f32>, Vec<f32>) {
-    let dx = lx / nx as f64;
-    let dy = ly / ny as f64;
-    let xs = lx / 2.0;
-    let ys = ly / 2.0;
+    let (nx, ny, nz) = (grid.nx, grid.ny, grid.nz);
+    let dx = grid.lx / nx as f64;
+    let dy = grid.ly / ny as f64;
+    let xs = grid.lx / 2.0;
+    let ys = grid.ly / 2.0;
 
-    let n_rho = nx.max(ny).max(2);
-    let rho_max = xs.max(lx - xs).hypot(ys.max(ly - ys)) * 1.0001;
-    let rho_step = rho_max / (n_rho - 1) as f64;
+    // Radial resolution is set by the grid alone, so a pattern that reaches
+    // further only lengthens the table, never coarsens it.
+    let rho_max = max_kernel_radius(grid.lx, grid.ly, pattern) * 1.0001;
+    let rho_step = max_kernel_radius(grid.lx, grid.ly, &BeamPattern::single()) * 1.0001
+        / (nx.max(ny).max(2) - 1) as f64;
+    let n_rho = (rho_max / rho_step).ceil() as usize + 1;
 
     let mut table = vec![0f64; n_rho * nz];
+    let mut mua_z = vec![0f64; nz];
     for iz in 0..nz {
-        let z = (iz as f64 + 0.5) * dz;
+        let z = (iz as f64 + 0.5) * grid.dz;
+        mua_z[iz] = mua_at(z);
         for ir in 0..n_rho {
-            let rho = ir as f64 * rho_step;
-            table[ir * nz + iz] = kernel_at(rho, z);
+            table[ir * nz + iz] = kernel_at(ir as f64 * rho_step, z);
         }
     }
 
@@ -152,26 +252,35 @@ pub fn sample_axisymmetric_volume(
     let mut phi = vec![0f32; n];
     let mut abs = vec![0f32; n];
 
-    for ix in 0..nx {
-        let x = (ix as f64 + 0.5) * dx;
-        let rx2 = (x - xs) * (x - xs);
-        for iy in 0..ny {
-            let y = (iy as f64 + 0.5) * dy;
-            let rho = (rx2 + (y - ys) * (y - ys)).sqrt();
+    // p0 stays the pattern's *total* power, so the spots share it out.
+    let share = p0 / pattern.len() as f64;
+    let mut col = vec![0f64; nz];
 
-            let rf = (rho / rho_step).min((n_rho - 1) as f64);
-            let ir0 = rf.floor() as usize;
-            let ir1 = (ir0 + 1).min(n_rho - 1);
-            let frac = rf - ir0 as f64;
+    for ix in 0..nx {
+        let x = (ix as f64 + 0.5) * dx - xs;
+        for iy in 0..ny {
+            let y = (iy as f64 + 0.5) * dy - ys;
+
+            col.fill(0.0);
+            for &(sx, sy) in &pattern.spots {
+                let rho = (x - sx).hypot(y - sy);
+                let rf = (rho / rho_step).min((n_rho - 1) as f64);
+                let ir0 = rf.floor() as usize;
+                let ir1 = (ir0 + 1).min(n_rho - 1);
+                let frac = rf - ir0 as f64;
+
+                let lo = &table[ir0 * nz..ir0 * nz + nz];
+                let hi = &table[ir1 * nz..ir1 * nz + nz];
+                for iz in 0..nz {
+                    col[iz] += lo[iz] + (hi[iz] - lo[iz]) * frac;
+                }
+            }
 
             for iz in 0..nz {
-                let z = (iz as f64 + 0.5) * dz;
-                let phi_lo = table[ir0 * nz + iz];
-                let phi_hi = table[ir1 * nz + iz];
-                let val = p0 * (phi_lo + (phi_hi - phi_lo) * frac);
+                let val = share * col[iz];
                 let idx = ix + iy * nx + iz * nx * ny;
                 phi[idx] = val as f32;
-                abs[idx] = (mua_at(z) * val) as f32;
+                abs[idx] = (mua_z[iz] * val) as f32;
             }
         }
     }
@@ -242,6 +351,95 @@ mod tests {
             let total = convolve_radial(&profile, 0.0, 0.0, |_d, _z| 1.0);
             assert!((total - 1.0).abs() < 5e-3, "total = {total}");
         }
+    }
+
+    fn test_grid() -> Grid {
+        Grid { lx: 2.0, ly: 2.0, nx: 8, ny: 8, nz: 4, dz: 0.25 }
+    }
+
+    #[test]
+    fn patterns_are_centred_and_counted() {
+        assert_eq!(BeamPattern::from_params("single", 5, 0.2).len(), 1);
+        assert_eq!(BeamPattern::from_params("line", 5, 0.2).len(), 5);
+        assert_eq!(BeamPattern::from_params("grid", 4, 0.2).len(), 16);
+        assert_eq!(BeamPattern::from_params("nonsense", 4, 0.2).len(), 1);
+
+        // An even count straddles the centre, an odd one sits on it; either
+        // way the pattern is centred, so its spots sum to zero.
+        for n in [3usize, 4] {
+            let line = BeamPattern::from_params("line", n, 0.2);
+            let sum: f64 = line.spots.iter().map(|&(x, _)| x).sum();
+            assert!(sum.abs() < 1e-12, "n={n}: spots off-centre by {sum}");
+        }
+
+        // (n-1)/2 pitches either side of centre, and a line has no y extent.
+        let (hx, hy) = BeamPattern::from_params("line", 4, 0.2).half_extent();
+        assert!((hx - 0.3).abs() < 1e-12 && hy == 0.0, "line: {hx}, {hy}");
+        assert_eq!(BeamPattern::from_params("grid", 3, 0.5).half_extent(), (0.5, 0.5));
+    }
+
+    #[test]
+    fn max_kernel_radius_reaches_the_far_corner() {
+        // Single centred spot: half the grid's diagonal, as before patterns.
+        let single = max_kernel_radius(2.0, 2.0, &BeamPattern::single());
+        assert!((single - 2f64.sqrt()).abs() < 1e-12, "got {single}");
+        // A spot 0.5 off-centre in x is that much further from the far corner.
+        let line = max_kernel_radius(2.0, 2.0, &BeamPattern::from_params("line", 2, 1.0));
+        assert!((line - 1.5f64.hypot(1.0)).abs() < 1e-12, "got {line}");
+    }
+
+    /// Zero pitch stacks every spot on the axis, so splitting P0 between them
+    /// has to add back up to exactly the single-spot answer.
+    #[test]
+    fn coincident_spots_match_a_single_spot() {
+        let kernel = |rho: f64, z: f64| (-2.0 * rho).exp() / (z + 0.1);
+        let grid = test_grid();
+        let (one, _) = sample_axisymmetric_volume(&grid, &BeamPattern::single(), 1.0, |_z| 0.0, kernel);
+        let stacked = BeamPattern::from_params("grid", 4, 0.0);
+        assert_eq!(stacked.len(), 16);
+        let (many, _) = sample_axisymmetric_volume(&grid, &stacked, 1.0, |_z| 0.0, kernel);
+        for (i, (&a, &b)) in one.iter().zip(many.iter()).enumerate() {
+            assert!((a - b).abs() <= 1e-6 * a.abs().max(1e-6), "voxel {i}: {a} vs {b}");
+        }
+    }
+
+    /// The pattern sum itself, against the explicit superposition it stands
+    /// for. The kernel is linear in rho so the table's interpolation is exact
+    /// and any difference is the summing machinery, not sampling error.
+    #[test]
+    fn sample_axisymmetric_volume_superposes_spots() {
+        let kernel = |rho: f64, z: f64| 1.0 + 0.5 * rho + z;
+        let grid = test_grid();
+        let pattern = BeamPattern::from_params("line", 3, 0.3);
+        let p0 = 2.0;
+        let (phi, abs) = sample_axisymmetric_volume(&grid, &pattern, p0, |_z| 0.25, kernel);
+
+        let share = p0 / pattern.len() as f64;
+        for ix in 0..grid.nx {
+            for iy in 0..grid.ny {
+                for iz in 0..grid.nz {
+                    let x = (ix as f64 + 0.5) * grid.lx / grid.nx as f64 - grid.lx / 2.0;
+                    let y = (iy as f64 + 0.5) * grid.ly / grid.ny as f64 - grid.ly / 2.0;
+                    let z = (iz as f64 + 0.5) * grid.dz;
+                    let want: f64 = pattern
+                        .spots
+                        .iter()
+                        .map(|&(sx, sy)| share * kernel((x - sx).hypot(y - sy), z))
+                        .sum();
+                    let idx = ix + iy * grid.nx + iz * grid.nx * grid.ny;
+                    assert!((phi[idx] as f64 - want).abs() < 1e-6 * want.abs(), "phi at {idx}");
+                    assert!((abs[idx] as f64 - 0.25 * want).abs() < 1e-6 * want.abs(), "abs at {idx}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pattern_extent_warning_fires_only_outside_the_grid() {
+        let inside = BeamPattern::from_params("line", 3, 0.2); // reaches 0.2 cm
+        assert!(pattern_extent_warning(&inside, 2.0, 2.0).is_none());
+        let outside = BeamPattern::from_params("line", 3, 2.0); // reaches 2.0 cm
+        assert!(pattern_extent_warning(&outside, 2.0, 2.0).is_some());
     }
 
     #[test]

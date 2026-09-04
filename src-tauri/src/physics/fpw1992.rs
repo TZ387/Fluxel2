@@ -3,7 +3,7 @@
 //! Ported from the original TypeScript at src/physics/fpw1992.ts (now removed —
 //! this is the single source of truth for the physics).
 
-use crate::physics::beam::{self, BeamProfile};
+use crate::physics::beam::{self, BeamPattern, BeamProfile, Grid};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
@@ -17,6 +17,12 @@ pub struct Fpw1992Params {
     /// sigma (Gaussian) or radius (flattop) in cm, ignored for "pencil".
     pub beam_profile: String,
     pub beam_width: f64,
+    /// "single" | "line" | "grid" — see beam.rs. `pattern_count` is spots
+    /// along the line or per side of the grid, `pattern_spacing` the pitch
+    /// between neighbours in cm; both ignored for "single".
+    pub beam_pattern: String,
+    pub pattern_count: usize,
+    pub pattern_spacing: f64,
     pub lx: f64,
     pub ly: f64,
     pub lz: f64,
@@ -32,6 +38,8 @@ pub struct Fpw1992Derived {
     pub d: f64,
     pub mueff: f64,
     pub delta: f64, // penetration depth
+    /// How many spots the chosen beam pattern works out to.
+    pub spots: usize,
 }
 
 #[derive(Serialize)]
@@ -52,6 +60,7 @@ pub fn derived(p: &Fpw1992Params) -> Fpw1992Derived {
         d,
         mueff,
         delta: 1.0 / mueff,
+        spots: BeamPattern::from_params(&p.beam_pattern, p.pattern_count, p.pattern_spacing).len(),
     }
 }
 
@@ -98,6 +107,11 @@ pub fn check_validity(p: &Fpw1992Params, derived: &Fpw1992Derived) -> ValidityRe
         ));
     }
 
+    let pattern = BeamPattern::from_params(&p.beam_pattern, p.pattern_count, p.pattern_spacing);
+    if let Some(reason) = beam::pattern_extent_warning(&pattern, p.lx, p.ly) {
+        reasons.push(reason);
+    }
+
     ValidityResult {
         valid: reasons.is_empty(),
         reasons,
@@ -133,8 +147,12 @@ pub fn compute_volume(p: &Fpw1992Params, d: &Fpw1992Derived) -> (Vec<f32>, Vec<f
     let four_pi_d = 4.0 * std::f64::consts::PI * d.d;
 
     let beam = BeamProfile::from_params(&p.beam_profile, p.beam_width);
+    let pattern = BeamPattern::from_params(&p.beam_pattern, p.pattern_count, p.pattern_spacing);
 
-    if beam.is_pencil() {
+    // One pencil spot has a closed form per voxel with no radial
+    // interpolation at all, so it keeps its own exact path; anything wider or
+    // repeated goes through the shared (rho, z) table.
+    if beam.is_pencil() && pattern.is_single() {
         for ix in 0..p.nx {
             let x = (ix as f64 + 0.5) * dx;
             let dx2 = (x - xs) * (x - xs);
@@ -170,11 +188,11 @@ pub fn compute_volume(p: &Fpw1992Params, d: &Fpw1992Derived) -> (Vec<f32>, Vec<f
         return (phi, abs);
     }
 
-    // Finite beam: the same point-source kernel, convolved with the beam's
-    // transverse profile (beam::convolve_radial — see beam.rs for why).
-    // That convolution is too expensive to redo per voxel, so it's sampled
-    // via beam::sample_axisymmetric_volume — the same coalesced-table trick
-    // liemert_kienle.rs uses for its own (pricier) series sum.
+    // Anything else: the same point-source kernel, convolved with the beam's
+    // transverse profile where it has one (beam::convolve_radial — see
+    // beam.rs for why), sampled onto a coalesced (rho, z) table and summed
+    // over the pattern's spots. That table is what makes a finite beam (too
+    // expensive to reconvolve per voxel) and a many-spot pattern both cheap.
     let point_kernel = |rho: f64, z: f64| -> f64 {
         let r1 = (rho * rho + (z - zs_real) * (z - zs_real)).sqrt();
         let r2 = (rho * rho + (z - zs_img) * (z - zs_img)).sqrt();
@@ -183,8 +201,9 @@ pub fn compute_volume(p: &Fpw1992Params, d: &Fpw1992Derived) -> (Vec<f32>, Vec<f
         (g1 - g2).max(0.0)
     };
 
-    beam::sample_axisymmetric_volume(p.lx, p.ly, p.nx, p.ny, p.nz, dz, p.p0, |_z| p.mua, |rho, z| {
-        beam::convolve_radial(&beam, rho, z, point_kernel)
+    let grid = Grid { lx: p.lx, ly: p.ly, nx: p.nx, ny: p.ny, nz: p.nz, dz };
+    beam::sample_axisymmetric_volume(&grid, &pattern, p.p0, |_z| p.mua, |rho, z| {
+        if beam.is_pencil() { point_kernel(rho, z) } else { beam::convolve_radial(&beam, rho, z, point_kernel) }
     })
 }
 
@@ -196,6 +215,7 @@ mod tests {
         Fpw1992Params {
             mua: 0.1, mus: 100.0, g: 0.9, n: 1.4, p0: 1.0,
             beam_profile: beam_profile.to_string(), beam_width,
+            beam_pattern: "single".to_string(), pattern_count: 1, pattern_spacing: 0.0,
             lx: 2.0, ly: 2.0, lz: 2.0,
             nx: 20, ny: 20, nz: 20,
         }
@@ -211,6 +231,37 @@ mod tests {
                 assert!(v.is_finite() && v >= 0.0, "{profile}: phi[{i}] = {v}");
                 assert!(a.is_finite() && a >= 0.0, "{profile}: abs[{i}] = {a}");
             }
+        }
+    }
+
+    /// A line pattern has to land where it says it does: mirror-symmetric
+    /// about both axes, and — since it spreads the same P0 along x — wider in
+    /// x than in y at the depth where the sources sit.
+    #[test]
+    fn line_pattern_is_centred_and_oriented() {
+        let mut params = base_params("pencil", 0.0);
+        params.nx = 41;
+        params.ny = 41;
+        params.nz = 20;
+        params.beam_pattern = "line".to_string();
+        params.pattern_count = 5;
+        params.pattern_spacing = 0.2;
+
+        let d = derived(&params);
+        assert_eq!(d.spots, 5);
+        let (phi, _) = compute_volume(&params, &d);
+        let at = |ix: usize, iy: usize, iz: usize| phi[ix + iy * 41 + iz * 41 * 41] as f64;
+
+        // Odd counts put a voxel dead centre; the pattern is centred there.
+        let (cx, cy, iz) = (20usize, 20usize, 1usize);
+        for k in 1..=8 {
+            let (xl, xr) = (at(cx - k, cy, iz), at(cx + k, cy, iz));
+            let (yl, yr) = (at(cx, cy - k, iz), at(cx, cy + k, iz));
+            assert!((xl - xr).abs() < 1e-5 * xl, "x mirror at k={k}: {xl} vs {xr}");
+            assert!((yl - yr).abs() < 1e-5 * yl, "y mirror at k={k}: {yl} vs {yr}");
+            // The line runs along x, so at equal distance the field is
+            // stronger along it than across it.
+            assert!(xl > yl, "k={k}: along-line {xl} should exceed across-line {yl}");
         }
     }
 

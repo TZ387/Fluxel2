@@ -89,6 +89,9 @@ export interface ModelDef<D = any> {
 const fmt3 = (v: number) => v.toFixed(3);
 const fmt0 = (v: number) => v.toFixed(0);
 
+/* Only worth saying when the beam pattern is more than one spot. */
+const spotsSuffix = (spots: number) => (spots > 1 ? ` | ${spots} spots` : "");
+
 /* Shared by every point-source model's beam group (FPW1992, Liemert-Kienle)
    — same three profile choices and width meaning everywhere, so defined
    once rather than copy-pasted per model. See src-tauri/src/physics/beam.rs
@@ -107,11 +110,34 @@ const BEAM_WIDTH_PARAM: SliderParamDef = {
   showIf: { id: "beam_profile", oneOf: ["gaussian", "flattop"] },
 };
 
+/* Where the beam is aimed, as opposed to its shape above — one spot, a row
+   from a scanner, or a fractional handpiece's array. P0 stays the pattern's
+   total power, so the spots share it out. */
+const BEAM_PATTERN_PARAM: SelectParamDef = {
+  id: "beam_pattern", label: "Beam pattern", kind: "select", def: "single",
+  options: [
+    { value: "single", label: "Single spot" },
+    { value: "line", label: "Line scan" },
+    { value: "grid", label: "Grid (fractional array)" },
+  ],
+};
+const PATTERN_COUNT_PARAM: SliderParamDef = {
+  id: "pattern_count", label: "Spots — along the line, or per side of the grid",
+  min: 2, max: 16, step: 1, def: 5, fmt: fmt0,
+  showIf: { id: "beam_pattern", oneOf: ["line", "grid"] },
+};
+const PATTERN_SPACING_PARAM: SliderParamDef = {
+  id: "pattern_spacing", label: "Spot spacing (pitch) [cm]",
+  min: 0.01, max: 1, step: 0.001, def: 0.2, fmt: fmt3,
+  showIf: { id: "beam_pattern", oneOf: ["line", "grid"] },
+};
+
 export interface Fpw1992Derived {
   musp: number;
   D: number;
   mueff: number;
   delta: number;
+  spots: number;
 }
 
 export interface KubelkaMunkDerived {
@@ -131,6 +157,7 @@ export interface LiemertKienleDerived {
   layers: LiemertKienleLayerDerived[];
   z0: number;
   Lz: number;
+  spots: number;
 }
 
 export const MODELS: Record<string, ModelDef> = {
@@ -141,7 +168,8 @@ export const MODELS: Record<string, ModelDef> = {
       `Done in ${dt} ms — ${derived.layers.length} layer${derived.layers.length === 1 ? "" : "s"} | ` +
       `z<sub>0</sub> = ${derived.z0.toFixed(3)} cm | L<sub>z</sub> = ${derived.Lz.toFixed(3)} cm | ` +
       `μ<sub>s</sub>' = ${derived.layers.map((l) => l.musp.toFixed(2)).join(", ")} cm⁻¹ | ` +
-      `μ<sub>eff</sub> = ${derived.layers.map((l) => l.mueff.toFixed(3)).join(", ")} cm⁻¹`,
+      `μ<sub>eff</sub> = ${derived.layers.map((l) => l.mueff.toFixed(3)).join(", ")} cm⁻¹` +
+      spotsSuffix(derived.spots),
 
     /* Point source (pencil beam) through a stack of homogeneous layers —
        the combination FPW1992 (point source, one layer) and Kubelka-Munk
@@ -180,6 +208,9 @@ export const MODELS: Record<string, ModelDef> = {
           { id: "p0", label: "P<sub>0</sub> input power [W]", min: 0.01, max: 10, step: 0.001, def: 1.0, fmt: fmt3 },
           BEAM_PROFILE_PARAM,
           BEAM_WIDTH_PARAM,
+          BEAM_PATTERN_PARAM,
+          PATTERN_COUNT_PARAM,
+          PATTERN_SPACING_PARAM,
           { id: "lx", label: "L<sub>x</sub> [cm]", min: 0.5, max: 6, step: 0.001, def: 2, fmt: fmt3 },
           { id: "ly", label: "L<sub>y</sub> [cm]", min: 0.5, max: 6, step: 0.001, def: 2, fmt: fmt3 },
           { id: "nx", label: "N<sub>x</sub> voxels", min: 10, max: 400, step: 1, def: 40, fmt: fmt0 },
@@ -196,7 +227,7 @@ export const MODELS: Record<string, ModelDef> = {
     summaryLine: (derived: Fpw1992Derived, dt: string) =>
       `Done in ${dt} ms — μ<sub>s</sub>' = ${derived.musp.toFixed(3)} cm⁻¹ | ` +
       `D = ${derived.D.toFixed(4)} cm | μ<sub>eff</sub> = ${derived.mueff.toFixed(4)} cm⁻¹ | ` +
-      `δ = ${derived.delta.toFixed(3)} cm`,
+      `δ = ${derived.delta.toFixed(3)} cm` + spotsSuffix(derived.spots),
 
     paramGroups: [
       {
@@ -216,6 +247,9 @@ export const MODELS: Record<string, ModelDef> = {
           { id: "p0", label: "P<sub>0</sub> input power [W]", min: 0.01, max: 10, step: 0.001, def: 1.0, fmt: fmt3 },
           BEAM_PROFILE_PARAM,
           BEAM_WIDTH_PARAM,
+          BEAM_PATTERN_PARAM,
+          PATTERN_COUNT_PARAM,
+          PATTERN_SPACING_PARAM,
           { id: "lx", label: "L<sub>x</sub> [cm]", min: 0.5, max: 6, step: 0.001, def: 2, fmt: fmt3 },
           { id: "ly", label: "L<sub>y</sub> [cm]", min: 0.5, max: 6, step: 0.001, def: 2, fmt: fmt3 },
           { id: "lz", label: "L<sub>z</sub> [cm]", min: 0.5, max: 6, step: 0.001, def: 2, fmt: fmt3 },

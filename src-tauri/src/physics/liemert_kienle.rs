@@ -70,7 +70,7 @@
 //! zero-fluence boundary too, so make it several penetration depths thick for
 //! an effectively semi-infinite substrate.
 
-use crate::physics::beam::{self, BeamProfile};
+use crate::physics::beam::{self, BeamPattern, BeamProfile, Grid};
 use crate::physics::bessel::{j0, j0_zero, j1};
 use serde::{Deserialize, Serialize};
 
@@ -95,6 +95,12 @@ pub struct LiemertKienleParams {
     /// sigma (Gaussian) or radius (flattop) in cm, ignored for "pencil".
     pub beam_profile: String,
     pub beam_width: f64,
+    /// "single" | "line" | "grid" — see beam.rs. `pattern_count` is spots
+    /// along the line or per side of the grid, `pattern_spacing` the pitch
+    /// between neighbours in cm; both ignored for "single".
+    pub beam_pattern: String,
+    pub pattern_count: usize,
+    pub pattern_spacing: f64,
     pub lx: f64,
     pub ly: f64,
     pub nx: usize,
@@ -117,6 +123,8 @@ pub struct LiemertKienleDerived {
     /// Total stack depth, which is also the grid's depth here.
     #[serde(rename = "Lz")]
     pub lz: f64,
+    /// How many spots the chosen beam pattern works out to.
+    pub spots: usize,
 }
 
 #[derive(Serialize)]
@@ -181,7 +189,7 @@ struct Stack {
 }
 
 impl Stack {
-    fn new(p: &LiemertKienleParams) -> Stack {
+    fn new(p: &LiemertKienleParams, pattern: &BeamPattern) -> Stack {
         let mut layers = Vec::with_capacity(p.layers.len());
         let mut z_top = 0.0;
         for l in &p.layers {
@@ -191,7 +199,7 @@ impl Stack {
         Stack {
             z0: 1.0 / layers[0].musp,
             lz: z_top,
-            a_prime: cylinder_radius(p.lx, p.ly) + layers[0].zb,
+            a_prime: cylinder_radius(p.lx, p.ly, pattern) + layers[0].zb,
             layers,
         }
     }
@@ -224,6 +232,7 @@ pub fn derived(p: &LiemertKienleParams) -> LiemertKienleDerived {
     LiemertKienleDerived {
         z0: 1.0 / layers[0].musp,
         lz: p.layers.iter().map(|l| l.thickness).sum(),
+        spots: BeamPattern::from_params(&p.beam_pattern, p.pattern_count, p.pattern_spacing).len(),
         layers,
     }
 }
@@ -268,9 +277,13 @@ pub fn check_validity(p: &LiemertKienleParams, derived: &LiemertKienleDerived) -
     }
 
     let beam = BeamProfile::from_params(&p.beam_profile, p.beam_width);
+    let pattern = BeamPattern::from_params(&p.beam_pattern, p.pattern_count, p.pattern_spacing);
+    if let Some(reason) = beam::pattern_extent_warning(&pattern, p.lx, p.ly) {
+        reasons.push(reason);
+    }
     if !beam.is_pencil() {
         let footprint = beam.extent();
-        let cyl = cylinder_radius(p.lx, p.ly);
+        let cyl = cylinder_radius(p.lx, p.ly, &pattern);
         if footprint > 0.3 * cyl {
             reasons.push(format!(
                 "beam footprint (~{:.3} cm) is a large fraction of the finite cylinder radius \
@@ -473,10 +486,13 @@ fn fluence_kernel(rho: f64, z: f64, stack: &Stack, modes: &ModeTable) -> f64 {
 }
 
 /// The finite-cylinder radius: large enough that its wall sits beyond every
-/// voxel (so it stays invisible in the display), but no larger — a bigger
-/// radius costs more series terms to converge.
-fn cylinder_radius(lx: f64, ly: f64) -> f64 {
-    1.5 * (0.5 * lx).hypot(0.5 * ly)
+/// voxel *as seen from every spot* (so it stays invisible in the display),
+/// but no larger — a bigger radius costs more series terms to converge. Each
+/// spot's kernel is the field of a source on the axis of a cylinder centred
+/// on it, so an off-centre spot needs a correspondingly wider one; for a
+/// single centred spot this is 1.5x half the grid's diagonal, as before.
+fn cylinder_radius(lx: f64, ly: f64, pattern: &BeamPattern) -> f64 {
+    1.5 * beam::max_kernel_radius(lx, ly, pattern)
 }
 
 /// The expensive part. Fluence depends only on (rho, z), never azimuth, so
@@ -485,18 +501,22 @@ fn cylinder_radius(lx: f64, ly: f64) -> f64 {
 /// (beam::sample_axisymmetric_volume, shared with fpw1992.rs's finite-beam
 /// path).
 pub fn compute_volume(p: &LiemertKienleParams) -> (Vec<f32>, Vec<f32>) {
-    let stack = Stack::new(p);
-    let beam = beam::BeamProfile::from_params(&p.beam_profile, p.beam_width);
+    let beam = BeamProfile::from_params(&p.beam_profile, p.beam_width);
+    let pattern = BeamPattern::from_params(&p.beam_pattern, p.pattern_count, p.pattern_spacing);
+    let stack = Stack::new(p, &pattern);
     let modes = build_mode_table(&stack, &beam, root_table());
-    let dz = stack.lz / p.nz as f64;
 
+    let grid = Grid {
+        lx: p.lx,
+        ly: p.ly,
+        nx: p.nx,
+        ny: p.ny,
+        nz: p.nz,
+        dz: stack.lz / p.nz as f64,
+    };
     beam::sample_axisymmetric_volume(
-        p.lx,
-        p.ly,
-        p.nx,
-        p.ny,
-        p.nz,
-        dz,
+        &grid,
+        &pattern,
         p.p0,
         |z| stack.layers[stack.layer_at(z)].mua,
         |rho, z| fluence_kernel(rho, z, &stack, &modes),
@@ -518,6 +538,9 @@ mod tests {
             p0: 1.0,
             beam_profile: "pencil".to_string(),
             beam_width: 0.0,
+            beam_pattern: "single".to_string(),
+            pattern_count: 1,
+            pattern_spacing: 0.0,
             lx: 2.0,
             ly: 2.0,
             nx: 20,
@@ -556,13 +579,14 @@ mod tests {
         ]);
         p.lx = lx;
         p.ly = ly;
-        let stack = Stack::new(&p);
+        let stack = Stack::new(&p, &BeamPattern::single());
         assert_eq!(stack.lz, lz);
         let modes = mode_table(&stack);
 
         let fpw_params = fpw1992::Fpw1992Params {
             mua, mus, g, n, p0,
             beam_profile: "pencil".to_string(), beam_width: 0.0,
+            beam_pattern: "single".to_string(), pattern_count: 1, pattern_spacing: 0.0,
             lx, ly, lz, nx: 2, ny: 2, nz: 2,
         };
         let fd = fpw1992::derived(&fpw_params);
@@ -651,7 +675,7 @@ mod tests {
             layer(0.15, 120.0, 0.90, 1.45, 0.40),
             layer(0.05, 60.0, 0.80, 1.33, 1.60),
         ]);
-        let stack = Stack::new(&p);
+        let stack = Stack::new(&p, &BeamPattern::single());
         let modes = mode_table(&stack);
         let (l1, l2) = (stack.layers[0], stack.layers[1]);
         let (t1, t2) = (l1.thickness, l2.thickness);
@@ -698,7 +722,7 @@ mod tests {
         let split2 = params(vec![split_top, split_top, bottom]);
 
         for other in [split, split2] {
-            let (sa, sb) = (Stack::new(&merged), Stack::new(&other));
+            let (sa, sb) = (Stack::new(&merged, &BeamPattern::single()), Stack::new(&other, &BeamPattern::single()));
             assert_eq!(sa.layers.len() + 1, sb.layers.len());
             let (ma, mb) = (mode_table(&sa), mode_table(&sb));
             let mut max_rel_err = 0.0f64;
@@ -720,7 +744,7 @@ mod tests {
     #[test]
     fn interface_matching_conditions_hold() {
         let p = contrasting_three_layer();
-        let stack = Stack::new(&p);
+        let stack = Stack::new(&p, &BeamPattern::single());
         let modes = mode_table(&stack);
         let h = 1e-4;
 
@@ -846,7 +870,7 @@ mod tests {
     #[test]
     fn layered_greens_function_matches_finite_volume_solve() {
         let p = contrasting_three_layer();
-        let stack = Stack::new(&p);
+        let stack = Stack::new(&p, &BeamPattern::single());
         let modes = mode_table(&stack);
 
         for &k in &[0usize, 3, 12] {
@@ -872,7 +896,7 @@ mod tests {
             layer(0.1, 100.0, 0.9, 1.4, 0.3),
             layer(0.3, 50.0, 0.9, 1.4, 1.7),
         ]);
-        let stack = Stack::new(&p);
+        let stack = Stack::new(&p, &BeamPattern::single());
         let pencil = mode_table(&stack);
         let narrow = build_mode_table(&stack, &BeamProfile::Gaussian { sigma: 1e-7 }, root_table());
 
@@ -927,6 +951,45 @@ mod tests {
         );
     }
 
+    /// A grid pattern through a layered stack: the artificial cylinder has to
+    /// grow with the pattern (so its wall stays invisible), the spots have to
+    /// land symmetrically, and the whole volume has to stay finite.
+    #[test]
+    fn grid_pattern_widens_the_cylinder_and_stays_symmetric() {
+        let mut p = params(vec![
+            layer(0.1, 100.0, 0.9, 1.4, 0.3),
+            layer(0.3, 50.0, 0.9, 1.4, 1.2),
+        ]);
+        p.nx = 41;
+        p.ny = 41;
+        p.nz = 20;
+        p.beam_pattern = "grid".to_string();
+        p.pattern_count = 3;
+        p.pattern_spacing = 0.25;
+
+        let pattern = BeamPattern::from_params(&p.beam_pattern, p.pattern_count, p.pattern_spacing);
+        assert_eq!(derived(&p).spots, 9);
+        // The wall has to sit further out than for one centred spot, or the
+        // outer spots would see it.
+        let widened = cylinder_radius(p.lx, p.ly, &pattern);
+        assert!(widened > cylinder_radius(p.lx, p.ly, &BeamPattern::single()));
+
+        let (phi, abs) = compute_volume(&p);
+        for (i, (&v, &a)) in phi.iter().zip(abs.iter()).enumerate() {
+            assert!(v.is_finite() && v > 0.0, "phi[{i}] = {v}");
+            assert!(a.is_finite() && a > 0.0, "abs[{i}] = {a}");
+        }
+
+        // A square grid of spots is symmetric under both mirrors and under
+        // swapping the two axes.
+        let at = |ix: usize, iy: usize, iz: usize| phi[ix + iy * 41 + iz * 41 * 41] as f64;
+        for k in 1..=10 {
+            let c = 20usize;
+            assert!((at(c - k, c, 1) - at(c + k, c, 1)).abs() < 1e-5 * at(c - k, c, 1));
+            assert!((at(c - k, c, 1) - at(c, c - k, 1)).abs() < 1e-5 * at(c - k, c, 1));
+        }
+    }
+
     /// Warnings name the layer by index, and Lz follows the stack rather than
     /// a separate grid-depth parameter.
     #[test]
@@ -968,6 +1031,9 @@ mod perf_and_sanity {
             p0: 1.0,
             beam_profile: "pencil".to_string(),
             beam_width: 0.0,
+            beam_pattern: "single".to_string(),
+            pattern_count: 1,
+            pattern_spacing: 0.0,
             lx: 2.0,
             ly: 2.0,
             nx: 400,
@@ -992,5 +1058,46 @@ mod perf_and_sanity {
         let phi_shallow = phi[idx(5)];
         let phi_deep = phi[idx(300)];
         assert!(phi_shallow > phi_deep, "fluence should decay with depth: shallow={phi_shallow} deep={phi_deep}");
+    }
+
+    /// A pattern adds table lookups per voxel, not kernel evaluations — the
+    /// series is still summed exactly once — so a 25-spot grid must not cost
+    /// anything like 25x a single spot.
+    #[test]
+    fn many_spots_stay_affordable() {
+        let mut params = LiemertKienleParams {
+            layers: vec![
+                layer(0.1, 100.0, 0.9, 1.4, 0.3),
+                layer(0.3, 50.0, 0.9, 1.33, 1.7),
+            ],
+            p0: 1.0,
+            beam_profile: "pencil".to_string(),
+            beam_width: 0.0,
+            beam_pattern: "single".to_string(),
+            pattern_count: 1,
+            pattern_spacing: 0.0,
+            lx: 2.0,
+            ly: 2.0,
+            nx: 200,
+            ny: 200,
+            nz: 200,
+        };
+        let t0 = std::time::Instant::now();
+        compute_volume(&params);
+        let single = t0.elapsed();
+
+        params.beam_pattern = "grid".to_string();
+        params.pattern_count = 5;
+        params.pattern_spacing = 0.15;
+        let t0 = std::time::Instant::now();
+        let (phi, _) = compute_volume(&params);
+        let patterned = t0.elapsed();
+        println!("200^3: 1 spot {single:?}, 25 spots {patterned:?}");
+
+        assert!(phi.iter().all(|v| v.is_finite() && *v >= 0.0));
+        assert!(
+            patterned.as_secs_f64() < 4.0 * single.as_secs_f64().max(0.05),
+            "25 spots took {patterned:?} vs {single:?} for one"
+        );
     }
 }

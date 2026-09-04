@@ -227,8 +227,11 @@ export function getParams(): Record<string, any> {
       Object.assign(r, readParamGrid(group.params));
     }
   });
+  /* Counts must reach Rust as integers — a typed-in 5.5 would otherwise
+     fail to deserialize into a usize. */
   if ("nx" in r) r.nx = r.nx | 0;
   if ("ny" in r) r.ny = r.ny | 0;
   if ("nz" in r) r.nz = r.nz | 0;
+  if ("pattern_count" in r) r.pattern_count = Math.max(1, r.pattern_count | 0);
   return r;
 }
