@@ -4,6 +4,7 @@
 //! this is the single source of truth for the physics).
 
 use crate::physics::beam::{self, BeamPattern, BeamProfile, Grid};
+use crate::physics::boundary::extrapolation_length;
 use crate::physics::validity::require;
 use serde::{Deserialize, Serialize};
 
@@ -135,9 +136,7 @@ pub fn check_validity(p: &Fpw1992Params, derived: &Fpw1992Derived) -> ValidityRe
 /// output buffers casts down to f32 — plenty for a log-scale color plot, and it
 /// halves the IPC payload size versus sending f64 end-to-end.
 pub fn compute_volume(p: &Fpw1992Params, d: &Fpw1992Derived) -> (Vec<f32>, Vec<f32>) {
-    let reff = -1.44 / (p.n * p.n) + 0.71 / p.n + 0.668 + 0.0636 * p.n;
-    let a = (1.0 + reff) / (1.0 - reff);
-    let zb = 2.0 * a * d.d;
+    let zb = extrapolation_length(p.n, d.d);
 
     let mut_ = p.mua + d.musp;
     let z0 = 1.0 / mut_;

@@ -62,17 +62,19 @@
 //! derived here instead; it is algebraically identical to the ported form at
 //! N=2 (whose β/γ is coth(α₂(t₂+zb₂)), one step of the recursion), which the
 //! tests check term by term alongside an independent finite-volume solve.
-//! One deliberate deviation from the reference: the boundary reflection fit
-//! (A, zb below) is reused from fpw1992.rs, so both point-source models treat
-//! the air-tissue boundary identically.
+//! One deliberate deviation from the reference: the air-tissue boundary uses
+//! the Groenhuis fit in boundary.rs — shared with fpw1992.rs — rather than the
+//! reference's own, equally standard one, so both point-source models treat
+//! that boundary identically.
 //!
 //! The stack is bounded by air at *both* ends — the last layer's floor is a
 //! zero-fluence boundary too, so make it several penetration depths thick for
 //! an effectively semi-infinite substrate.
 
 use crate::physics::beam::{self, BeamPattern, BeamProfile, Grid};
-use crate::physics::validity::require;
 use crate::physics::bessel::{j0, j0_zero, j1};
+use crate::physics::boundary::extrapolation_length;
+use crate::physics::validity::require;
 use serde::{Deserialize, Serialize};
 
 /// Every layer carries its own thickness, so the grid's depth is the stack's
@@ -151,15 +153,6 @@ struct LayerCoeffs {
     thickness: f64,
     /// Depth of this layer's top face below the surface.
     z_top: f64,
-}
-
-/// Same reflection-coefficient fit as fpw1992.rs (Groenhuis et al.), reused
-/// here so both point-source models treat the air-tissue boundary the same
-/// way — see this module's doc comment.
-fn extrapolation_length(n: f64, d: f64) -> f64 {
-    let reff = -1.44 / (n * n) + 0.71 / n + 0.668 + 0.0636 * n;
-    let a = (1.0 + reff) / (1.0 - reff);
-    2.0 * a * d
 }
 
 fn layer_coeffs(l: &LKLayerParams, z_top: f64) -> LayerCoeffs {
@@ -622,9 +615,7 @@ mod tests {
             lx, ly, lz, nx: 2, ny: 2, nz: 2,
         };
         let fd = fpw1992::derived(&fpw_params);
-        let reff = -1.44 / (n * n) + 0.71 / n + 0.668 + 0.0636 * n;
-        let a_coeff = (1.0 + reff) / (1.0 - reff);
-        let zb = 2.0 * a_coeff * fd.d;
+        let zb = extrapolation_length(n, fd.d);
         let mut_ = mua + fd.musp;
         let z0_fpw = 1.0 / mut_;
         let zs_img = -(z0_fpw + 2.0 * zb);
