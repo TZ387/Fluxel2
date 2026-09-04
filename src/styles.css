@@ -339,6 +339,13 @@ input[type=range]:focus-visible { box-shadow: 0 0 0 3px rgba(88,166,255,0.3); }
 .status-warn p { margin-bottom: 0.75em; }
 .status-warn p:last-child { margin-bottom: 0; }
 
+/* A failed run, as opposed to a completed one whose physics is shaky —
+   different colour so the two aren't mistaken for each other. */
+.status-error {
+  color: var(--danger);
+  margin-top: 4px;
+}
+
 /* ── plots ───────────────────────────────────────────────────── */
 .plots-row {
   display: grid;

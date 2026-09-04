@@ -158,15 +158,18 @@ const canvasResizeObserver = new ResizeObserver(() => {
 
 /* ================================================================
    MAIN RUN HANDLER
+   ================================================================
+   The compute can fail for reasons the parameter panel can't rule
+   out on its own — a grid too large to allocate, or a value the
+   backend won't accept — so the click handler is only the shell:
+   it disables the button, hands off to runAndRender(), and makes
+   sure that whatever happens the button comes back and the status
+   line stops saying "Computing…". Without that, one failed run
+   leaves the UI stuck until reload.
    ================================================================ */
-document.getElementById("run-btn")!.addEventListener("click", async () => {
+async function runAndRender(): Promise<void> {
   const p = getParams(); // reads whatever controls the current model's paramGroups produced
-  const btn = document.getElementById("run-btn") as HTMLButtonElement;
   const st = document.getElementById("status")!;
-
-  btn.disabled = true;
-  st.textContent = "Computing…";
-
   const model = selectedModel();
 
   const t0 = performance.now();
@@ -188,10 +191,7 @@ document.getElementById("run-btn")!.addEventListener("click", async () => {
   redraw("phi");
   redraw("abs");
 
-  const summary = model.summaryLine(derived, dt);
-
-  st.textContent = "";
-  st.innerHTML = summary;
+  st.innerHTML = model.summaryLine(derived, dt);
 
   if (!valid) {
     const warn = document.createElement("div");
@@ -200,14 +200,39 @@ document.getElementById("run-btn")!.addEventListener("click", async () => {
     intro.textContent = "⚠ Results may not be accurate — diffusion approximation is weakly justified here:";
     warn.appendChild(intro);
     reasons.forEach((reason) => {
+      /* innerHTML, not textContent: these carry <sub> markup, and they're
+         authored in the model's own Rust source, not user input. */
       const para = document.createElement("p");
       para.innerHTML = reason + ".";
       warn.appendChild(para);
     });
     st.appendChild(warn);
   }
+}
 
-  btn.disabled = false;
+document.getElementById("run-btn")!.addEventListener("click", async () => {
+  const btn = document.getElementById("run-btn") as HTMLButtonElement;
+  const st = document.getElementById("status")!;
+
+  btn.disabled = true;
+  st.textContent = "Computing…";
+
+  try {
+    await runAndRender();
+  } catch (err) {
+    console.error(err);
+    st.textContent = "";
+    const box = document.createElement("div");
+    box.className = "status-error";
+    /* textContent, not innerHTML: unlike the validity reasons above, this
+       string is whatever the backend threw, so it isn't trusted markup. */
+    box.textContent = `✖ Compute failed — ${err instanceof Error ? err.message : String(err)}`;
+    st.appendChild(box);
+    /* Any plots on screen are from the previous successful run, so they're
+       left alone rather than cleared — the message says this one failed. */
+  } finally {
+    btn.disabled = false;
+  }
 });
 
 /* ================================================================

@@ -227,11 +227,14 @@ export function getParams(): Record<string, any> {
       Object.assign(r, readParamGrid(group.params));
     }
   });
-  /* Counts must reach Rust as integers — a typed-in 5.5 would otherwise
-     fail to deserialize into a usize. */
-  if ("nx" in r) r.nx = r.nx | 0;
-  if ("ny" in r) r.ny = r.ny | 0;
-  if ("nz" in r) r.nz = r.nz | 0;
-  if ("pattern_count" in r) r.pattern_count = Math.max(1, r.pattern_count | 0);
+  /* Counts reach Rust as usize, so they have to be whole and at least 1. A
+     value box will take 5.5, or a negative — it re-ranges the slider rather
+     than clamping — and either would be rejected by the backend. Math.trunc
+     rather than `| 0`, which wraps anything past 2^31 to a bogus count. */
+  const count = (v: number) => (Number.isFinite(v) ? Math.max(1, Math.trunc(v)) : 1);
+  if ("nx" in r) r.nx = count(r.nx);
+  if ("ny" in r) r.ny = count(r.ny);
+  if ("nz" in r) r.nz = count(r.nz);
+  if ("pattern_count" in r) r.pattern_count = count(r.pattern_count);
   return r;
 }
