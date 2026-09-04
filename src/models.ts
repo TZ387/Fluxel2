@@ -1,46 +1,31 @@
 /* ================================================================
    MODEL REGISTRY
    ================================================================
-   Each entry describes one theoretical model available in the
-   "Model" dropdown. The actual physics (compute + validity checks)
-   lives in Rust, under src-tauri/src/physics/ — this file only owns
-   the UI-facing bits: the parameter schema, and which Tauri command
-   pair to invoke for this model (see src/compute.ts).
+   Each entry describes one theoretical model in the "Model" dropdown.
+   The physics (compute + validity checks) lives in Rust, under
+   src-tauri/src/physics/ — this file owns only the UI-facing bits:
+   the parameter schema, and which Tauri command pair to invoke (see
+   src/compute.ts).
 
-   Why parameters live here (per model) rather than in a shared
-   global list: different models need different inputs entirely —
-   not just different defaults. A single-layer model like FPW1992
-   takes one set of optical properties; Kubelka-Munk needs a
-   *repeatable* set (one per layer) plus its own grid. Keeping the
-   schema next to the model it belongs to means ui-params.ts can stay
-   generic.
+   Parameters live here per-model, not in a shared list, because
+   models need genuinely different inputs, not just different
+   defaults (FPW1992 takes one set of optical properties;
+   Kubelka-Munk needs a *repeatable* set, one per layer). Keeping each
+   schema with its model lets ui-params.ts stay generic.
 
-   paramGroups: array of groups, each rendered as its own panel.
-     Plain group:
-       { id, title, params: [ {id,label,min,max,step,def,fmt}, ... ] }
-       → values merge flat into getParams()'s result, keyed by
-         each param's own `id` (e.g. p.mua, p.lx).
+   paramGroups: array of groups, each its own panel.
+     Plain group: { id, title, params: [{id,label,min,max,step,def,fmt}, ...] }
+       → merges flat into getParams()'s result (p.mua, p.lx, ...).
+     Repeating group: { id, title, params: [...], repeat: {min, max, def} }
+       → rendered as `def` instances with add/remove buttons (bounded
+         by min/max); comes back as an array, e.g. p.layers = [{...}, {...}].
 
-     Repeating group (e.g. per-layer parameters):
-       { id, title, params: [...], repeat: {min, max, def} }
-       → rendered as `def` instances initially, with add/remove-
-         instance buttons (bounded by min/max). Values come back as
-         an array under result[group.id], one object per instance,
-         e.g. p.layers = [ {mua:..., mus:...}, {mua:..., mus:...} ].
-
-   To add a new model in future:
-     1. Add a Rust module under src-tauri/src/physics/ with
-        derived(), check_validity(), and compute_volume() (see
-        fpw1992.rs / kubelka_munk.rs), and register its
-        `<name>_summary`/`<name>_volume` commands in lib.rs.
-     2. Add one entry below: label, command (matching the Rust
-        command prefix), summaryLine(derived, dt), and this model's
-        own paramGroups (with its own defaults/ranges — nothing is
-        shared with other models unless you explicitly reuse the
-        same param objects).
-
-   The dropdown, param panel, run handler, and warning display all
-   pick up new entries automatically — no other code needs to change.
+   To add a model: add a Rust module under src-tauri/src/physics/ with
+   derived(), check_validity(), compute_volume() (see fpw1992.rs /
+   kubelka_munk.rs), register its `<name>_summary`/`<name>_volume`
+   commands in lib.rs, then add one entry below (label, command,
+   summaryLine, paramGroups). The dropdown, param panel, run handler,
+   and warning display all pick it up automatically.
    ================================================================ */
 
 export interface SliderParamDef {

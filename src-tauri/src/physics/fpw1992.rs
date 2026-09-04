@@ -55,11 +55,10 @@ pub fn derived(p: &Fpw1992Params) -> Fpw1992Derived {
     }
 }
 
-/// The diffusion approximation replaces the full radiative transport equation
-/// with its lowest-order (P1) angular expansion — only accurate once light has
-/// scattered enough times to become nearly isotropic before it's absorbed. See
-/// the original TS file's comments (git history) for the full derivation notes
-/// behind each of these three checks.
+/// The diffusion approximation is the transport equation's lowest-order (P1)
+/// angular expansion — accurate only once light has scattered enough to
+/// become nearly isotropic before being absorbed. See the original TS
+/// file's comments (git history) for the derivation behind each check.
 pub fn check_validity(p: &Fpw1992Params, derived: &Fpw1992Derived) -> ValidityResult {
     let ratio = derived.musp / p.mua;
     let min_dim = p.lx.min(p.ly).min(p.lz);
@@ -171,15 +170,11 @@ pub fn compute_volume(p: &Fpw1992Params, d: &Fpw1992Derived) -> (Vec<f32>, Vec<f
         return (phi, abs);
     }
 
-    // Finite beam: the same point-source kernel, convolved (beam::convolve_radial)
-    // with the beam's transverse profile — see beam.rs for why this is the
-    // right way to generalize a point-source model to a finite beam. That
-    // convolution is a 2-D numerical integral per (rho, z) point, too
-    // expensive to redo per voxel, so it's sampled via
-    // beam::sample_axisymmetric_volume — the same coalesced-(rho,z)-table-
-    // plus-bilinear-interpolation trick liemert_kienle.rs uses for its own
-    // (much more expensive) series sum, factored out so both models share
-    // one implementation of the table/interpolation bookkeeping.
+    // Finite beam: the same point-source kernel, convolved with the beam's
+    // transverse profile (beam::convolve_radial — see beam.rs for why).
+    // That convolution is too expensive to redo per voxel, so it's sampled
+    // via beam::sample_axisymmetric_volume — the same coalesced-table trick
+    // liemert_kienle.rs uses for its own (pricier) series sum.
     let point_kernel = |rho: f64, z: f64| -> f64 {
         let r1 = (rho * rho + (z - zs_real) * (z - zs_real)).sqrt();
         let r2 = (rho * rho + (z - zs_img) * (z - zs_img)).sqrt();

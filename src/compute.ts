@@ -1,15 +1,14 @@
 /* ================================================================
    RUST COMPUTE BRIDGE
    ================================================================
-   The physics itself lives in src-tauri/src/physics/ — this file
-   just knows how to call it. Each model exposes two Tauri commands
-   (see models.ts's `command` field and lib.rs):
+   The physics lives in src-tauri/src/physics/ — this file just calls
+   it. Each model exposes two Tauri commands (see models.ts's
+   `command` field and lib.rs):
      `<command>_summary(params)` → JSON { derived, valid, reasons },
        cheap regardless of grid size.
-     `<command>_volume(params)`  → raw bytes: phi (f32 LE) followed
-       by abs (f32 LE), each nx*ny*nz elements — the expensive part,
-       sent as a `tauri::ipc::Response` to skip JSON serialization of
-       a multi-million-element array.
+     `<command>_volume(params)`  → raw bytes: phi then abs (f32 LE),
+       each nx*ny*nz elements — sent as a `tauri::ipc::Response` to
+       skip JSON serialization of a multi-million-element array.
    ================================================================ */
 
 import { invoke } from "@tauri-apps/api/core";

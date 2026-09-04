@@ -1,23 +1,17 @@
 /* ================================================================
    GENERIC PARAMETER PANEL BUILDER
    ================================================================
-   Renders whatever `paramGroups` the currently-selected model
-   declares (see models.ts for the schema shape). This file knows
-   nothing about any specific model's parameters — it only knows how
-   to turn a group's `params` array into rows, and how to repeat that
-   for groups marked `repeat` (e.g. one block of controls per tissue
-   layer, with add/remove buttons since the layer count varies from
-   case to case).
+   Renders whatever `paramGroups` the selected model declares (see
+   models.ts). Knows nothing about any specific model's parameters —
+   only how to turn a group's `params` array into rows, and how to
+   repeat that for `repeat` groups (e.g. one block per tissue layer,
+   with add/remove buttons since the layer count varies).
 
-   Each parameter row renders:
-     [min box] ——— slider ——— [max box]   [value box]
-
-   All three number inputs are directly editable:
-   - Editing the value box moves the slider and clamps to [min,max]
-     if within range, or extends the range silently if outside it.
-   - Editing a bound box re-ranges the slider; if the current value
-     falls outside the new bound it is clamped to the bound.
-   - Dragging the slider updates the value box.
+   Each row renders: [min box] — slider — [max box] — [value box].
+   All three are directly editable: the value box moves the slider
+   (clamping to [min,max], or extending it if typed outside); a bound
+   box re-ranges the slider, clamping the value if needed; the slider
+   updates the value box.
    ================================================================ */
 
 import type { ModelDef, ParamDef, ParamGroup } from "./models";

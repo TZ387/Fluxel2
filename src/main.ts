@@ -9,18 +9,13 @@ import { buildHelp } from "./help";
    SIMULATION STATE
    ================================================================
    Holds the most recent computed volumes plus the grid dimensions
-   they were computed on. Wrapped in an object (rather than loose
-   globals) so the fields it owns and the ways it can be mutated
-   are explicit and in one place.
+   they were computed on, as an object rather than loose globals.
 
    Each volume's log-scale transform and min/max are precomputed once
-   here (an O(nx*ny*nz) pass) rather than in redraw() — redraw() runs
-   on every axis-slider drag, which only changes which 2D slice is
-   shown, not the underlying data, so redoing that full-volume pass
-   per drag was wasted work (invisible at Fluxel's original ≤80³
-   grids, very much not at the higher resolutions Rust now makes
-   practical — e.g. a slider drag at 400³ was re-running ~64M
-   Math.log10 calls before this).
+   here rather than in redraw(), which runs on every axis-slider drag
+   and only changes which 2D slice is shown — redoing the full-volume
+   log10 pass per drag was wasted work (invisible at Fluxel's original
+   ≤80³ grids, not at the higher resolutions Rust now makes practical).
    ================================================================ */
 type VolumeKind = "phi" | "abs";
 
@@ -139,14 +134,11 @@ function redraw(suffix: VolumeKind): void {
 /* ================================================================
    RESPONSIVE CANVAS RESIZE
    ================================================================
-   The plot canvases are sized in JS (cv.width/height) to match their
-   rendered CSS pixel size, so they stay crisp at any zoom level. A
-   ResizeObserver on the canvases themselves — rather than a window
-   'resize' listener — catches every reason their box can change size
-   (window resize, browser zoom, the plots-row collapsing to a single
-   column) and already coalesces to at most one callback per frame, so
-   no manual debounce is needed; redraws stay live during a drag
-   instead of snapping in after the fact.
+   Canvases are sized in JS (cv.width/height) to match their rendered
+   CSS pixel size, so they stay crisp at any zoom. A ResizeObserver on
+   the canvases themselves (rather than a window 'resize' listener)
+   catches every reason their box can change size, and already
+   coalesces to one callback per frame — no manual debounce needed.
    ================================================================ */
 function syncCanvasSizes(): void {
   ["cv-phi", "cv-abs"].forEach((id) => {
@@ -221,11 +213,10 @@ document.getElementById("run-btn")!.addEventListener("click", async () => {
 /* ================================================================
    MODEL SWITCHING
    ================================================================
-   Each model owns its own paramGroups (schema + defaults — see
-   models.ts), so switching models means tearing down and rebuilding
-   the whole parameter panel, not just resetting values. Any plots
-   from a previous model are hidden since they'd correspond to a
-   different (or no longer valid) set of inputs.
+   Each model owns its own paramGroups (see models.ts), so switching
+   means tearing down and rebuilding the whole parameter panel, not
+   just resetting values. Plots from the previous model are hidden
+   since they'd no longer match the current inputs.
    ================================================================ */
 function onModelChange(): void {
   const model = selectedModel();

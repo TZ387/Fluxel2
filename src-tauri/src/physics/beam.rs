@@ -1,49 +1,34 @@
 //! Finite transverse beam profiles, convolved onto a point-source model.
 //!
-//! Every point-source model in this crate (fpw1992.rs, liemert_kienle.rs)
-//! reduces to a kernel Phi_pt(rho, z) — radial distance from the beam axis
-//! and depth, never azimuth, since a point source is trivially axisymmetric.
-//! A finite beam replaces that point source with a radially symmetric power
-//! density S(rho') spread over the entry surface, normalized so
-//! integral(S dA) = 1 (so p0 keeps meaning "total input power" regardless of
-//! beam shape). Since the diffusion equation is linear, the resulting
-//! fluence is exactly the transverse (2-D) convolution of the point-source
-//! kernel with S:
+//! Every point-source model here (fpw1992.rs, liemert_kienle.rs) reduces to
+//! a kernel Phi_pt(rho, z) — never azimuth, since a point source is
+//! axisymmetric. A finite beam replaces the point source with a radially
+//! symmetric power density S(rho'), normalized so integral(S dA) = 1 (so p0
+//! keeps meaning "total input power" regardless of beam shape). The
+//! diffusion equation is linear, so the resulting fluence is just the 2-D
+//! convolution of Phi_pt with S:
 //!
 //!   Phi_beam(rho_vec, z) = integral[ S(rho'_vec) * Phi_pt(|rho_vec - rho'_vec|, z) d2rho' ]
 //!
-//! which (convolution of two radially-symmetric functions) is itself
-//! radially symmetric in rho_vec, i.e. still just a function of (rho, z).
+//! — itself radially symmetric (convolution of two radially-symmetric
+//! functions), so still just a function of (rho, z).
 //!
-//! Two ways to evaluate that convolution are used here, chosen per model to
-//! match how each already expresses Phi_pt:
+//! Two ways to evaluate that convolution, picked per model to match how each
+//! already expresses Phi_pt:
+//! - Liemert-Kienle expands Phi_pt as a sum over spatial frequencies
+//!   s_n = (zeros of J0)/a'. A point source excites every mode with weight 1
+//!   (a delta function's spectrum is flat); swapping in S(rho') just
+//!   multiplies each mode by S's own 0-order Hankel transform
+//!   (spectral_factor below) — exact as long as the beam sits well inside
+//!   the artificial cylinder wall (see cylinder_radius in liemert_kienle.rs).
+//! - FPW1992 has no such series (closed-form real+image dipole for a
+//!   translation-invariant plane), so its convolution is evaluated directly
+//!   as a 2-D numerical integral over the beam's footprint (convolve_radial).
 //!
-//! - Liemert-Kienle already expands Phi_pt as a sum over discrete transverse
-//!   spatial frequencies s_n = (zeros of J0)/a' (a Fourier-Bessel/Dini
-//!   series, see liemert_kienle.rs) with coefficients that, for a point
-//!   source at the axis, all carry an implicit factor of J0(s_n * 0) = 1 —
-//!   a delta function's Fourier-Bessel spectrum is flat. Replacing the point
-//!   source with a distributed S(rho') replaces that implicit "1" with
-//!   S's own 0-order Hankel transform at s_n (spectral_factor below): the
-//!   z-dependent part of each mode (how the layered medium responds at
-//!   transverse wavenumber s_n) is unchanged, only how strongly the source
-//!   excites that mode changes. Exact in the limit that the beam sits well
-//!   inside the artificial cylinder wall — the same approximation the
-//!   point-source model already relies on for that wall to stay invisible
-//!   (see cylinder_radius in liemert_kienle.rs).
-//! - FPW1992 has no such series — it's a closed-form real+image dipole pair
-//!   for a translation-invariant infinite plane — so its convolution is
-//!   evaluated directly as a 2-D numerical integral over the beam's
-//!   footprint (convolve_radial below), generic in the point-source kernel.
-//!
-//! Gaussian and flat-top's 0-order Hankel transforms (spectral_factor) are
-//! standard closed forms:
-//!   Gaussian, S(rho') = exp(-rho'^2/(2 sigma^2)) / (2*pi*sigma^2):
-//!     Hankel transform = exp(-s^2 sigma^2 / 2)
-//!   Flat-top disk of radius R, S(rho') = 1/(pi R^2) for rho' <= R:
-//!     Hankel transform = 2*J1(s R) / (s R)
-//! Both -> 1 as the beam narrows (sigma, R -> 0), recovering the point
-//! source — a useful sanity check on the algebra above.
+//! Gaussian and flat-top's 0-order Hankel transforms are standard closed
+//! forms — Gaussian: exp(-s^2 sigma^2/2); flat-top disk of radius R:
+//! 2*J1(sR)/(sR) — both -> 1 as the beam narrows, recovering the point
+//! source (a useful sanity check on the algebra).
 
 use crate::physics::bessel::j1;
 
@@ -128,14 +113,12 @@ impl BeamProfile {
 const N_RHO_QUAD: usize = 24;
 const N_THETA_QUAD: usize = 16;
 
-/// Builds an nx*ny*nz (phi, abs) volume from any axisymmetric fluence
-/// kernel `kernel_at(rho, z)` (per unit p0) by evaluating it on a coalesced
-/// (rho, z) table and bilinearly interpolating (in rho only — z is exact)
-/// out to every voxel, then scaling by p0 and by `mua_at(z)` for the
-/// absorption channel. Shared by fpw1992.rs's finite-beam path and every
-/// call in liemert_kienle.rs, since both reduce to exactly this shape once
-/// you have Phi(rho, z) in hand — whether that kernel is a Bessel series, a
-/// beam convolution, or (in principle) anything else axisymmetric.
+/// Builds an nx*ny*nz (phi, abs) volume from an axisymmetric fluence kernel
+/// `kernel_at(rho, z)` (per unit p0): evaluate it on a coalesced (rho, z)
+/// table, then bilinearly interpolate (rho only — z is exact) out to every
+/// voxel, scaling by p0 and by `mua_at(z)` for the absorption channel.
+/// Shared by fpw1992.rs's finite-beam path and liemert_kienle.rs, since both
+/// reduce to this shape once Phi(rho, z) is in hand.
 pub fn sample_axisymmetric_volume(
     lx: f64,
     ly: f64,
@@ -196,20 +179,16 @@ pub fn sample_axisymmetric_volume(
     (phi, abs)
 }
 
-/// Convolves a point-source kernel `point_kernel(d, z)` (d = transverse
-/// distance from the point source to the field point) with this beam's
-/// radial profile, at field point (rho, z) — rho being the field point's own
-/// transverse distance from the beam axis. Generic in the kernel so both
-/// FPW1992's closed form and (in principle) any other translation-invariant
-/// point-source model can reuse it; only Liemert-Kienle skips it in favor of
-/// the cheaper, exact spectral_factor approach above.
+/// Convolves a point-source kernel `point_kernel(d, z)` (d = distance from
+/// the point source to the field point) with this beam's radial profile, at
+/// field point (rho, z). Generic in the kernel so any translation-invariant
+/// point-source model can reuse it — only Liemert-Kienle skips it, in favor
+/// of the cheaper, exact spectral_factor approach above.
 ///
-/// Composite midpoint rule in rho' (the integrand is smooth on [0, r_cut] —
+/// Composite midpoint rule in rho' and theta' (the integrand is smooth —
 /// flat-top's cutoff is the integration limit itself, not a discontinuity
-/// inside it) and in theta' (periodic, so a plain evenly-spaced sum is the
-/// trapezoidal rule). N_RHO_QUAD/N_THETA_QUAD are a hand-picked prototype
-/// accuracy/cost tradeoff, not the output of a convergence study — raise
-/// them if a narrow, sharply-peaked beam needs finer resolution.
+/// inside it). N_RHO_QUAD/N_THETA_QUAD are hand-picked, not from a
+/// convergence study — raise them for a narrow, sharply-peaked beam.
 pub fn convolve_radial(profile: &BeamProfile, rho: f64, z: f64, point_kernel: impl Fn(f64, f64) -> f64) -> f64 {
     let r_cut = profile.footprint_radius();
     let dr = r_cut / N_RHO_QUAD as f64;

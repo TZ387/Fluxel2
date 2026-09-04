@@ -1,12 +1,10 @@
 //! Bessel functions J0, J1, and the positive zeros of J0.
 //!
-//! j0()/j1() are a direct port of the Cephes Math Library's rational-Chebyshev
-//! approximations (Moshier, "Cephes Math Library Release 2.8", 2000; the same
-//! algorithm underlying many libm implementations), since the standard library
-//! has no Bessel functions and this keeps the model dependency-free. j0_zero()
-//! finds the n-th positive root of J0 via McMahon's asymptotic expansion for
-//! the initial guess, refined to full double precision with a few steps of
-//! Newton's method (J0' = -J1).
+//! j0()/j1() port the Cephes Math Library's rational-Chebyshev
+//! approximations (Moshier, 2000; the same algorithm underlying many libm
+//! implementations) — the standard library has none, and this keeps the
+//! model dependency-free. j0_zero() seeds the n-th root with McMahon's
+//! asymptotic expansion, then polishes it with Newton's method (J0' = -J1).
 
 const PIO4: f64 = 0.78539816339744830962;
 const SQ2OPI: f64 = 0.79788456080286535588;
@@ -171,12 +169,11 @@ pub fn j1(x: f64) -> f64 {
     }
 }
 
-/// The n-th positive zero of J0 (n = 1, 2, 3, ...), i.e. j_{0,n} such that
-/// J0(j_{0,n}) = 0. Seeded with McMahon's asymptotic expansion (Abramowitz &
-/// Stegun 9.5.12) and polished with Newton's method (J0' = -J1) to full f64
-/// precision — the asymptotic guess is within ~1e-3 of the true root even at
-/// n=1, safely inside Newton's basin of attraction given roots are spaced ~π
-/// apart.
+/// The n-th positive zero of J0 (j_{0,n} such that J0(j_{0,n}) = 0), n = 1,
+/// 2, 3... Seeded via McMahon's asymptotic expansion (Abramowitz & Stegun
+/// 9.5.12), polished with Newton's method (J0' = -J1) — the seed is within
+/// ~1e-3 of the true root even at n=1, safely inside Newton's basin given
+/// roots are spaced ~π apart.
 pub fn j0_zero(n: u32) -> f64 {
     let beta = (n as f64 - 0.25) * std::f64::consts::PI;
     let eight_beta = 8.0 * beta;

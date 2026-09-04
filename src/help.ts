@@ -2,19 +2,16 @@
    HELP TAB CONTENT
    ================================================================
    Static prose — general usage plus one section per model (equation,
-   use cases, limits, reference). Built once at init since none of it
-   depends on simulator state. Model titles come from models.ts (the
-   MODELS registry) so they can't drift out of sync with the dropdown;
-   everything else here is narrative that doesn't fit that schema.
+   use cases, limits, reference). Built once at init. Model titles
+   come from models.ts's MODELS registry so they can't drift from the
+   dropdown; everything else is narrative outside that schema.
 
-   Equations use HTML <sub>/<sup> exclusively (never the unicode
-   subscript/superscript characters like x&#8321; or x&sup2;) — mixing
-   the two renders inconsistently, since <sub>/<sup> are actually
-   baseline-shifted and resized by the browser while the unicode
-   glyphs just sit on the line at a fixed small size. One formula per
-   line, with any explanatory aside as its own paragraph rather than
-   crammed onto the same line — a wall of equations separated only by
-   padding spaces reads as noise, not as math.
+   Equations use HTML <sub>/<sup> exclusively, never unicode
+   subscript/superscript — mixing the two renders inconsistently,
+   since <sub>/<sup> are baseline-shifted and resized by the browser
+   while unicode glyphs sit at a fixed small size. One formula per
+   line; an explanatory aside gets its own paragraph rather than being
+   crammed onto the same line.
    ================================================================ */
 
 import { MODELS } from "./models";
