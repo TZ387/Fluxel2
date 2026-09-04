@@ -4,6 +4,7 @@
 //! this is the single source of truth for the physics).
 
 use crate::physics::beam::{self, BeamPattern, BeamProfile, Grid};
+use crate::physics::validity::require;
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
@@ -69,6 +70,18 @@ pub fn derived(p: &Fpw1992Params) -> Fpw1992Derived {
 /// become nearly isotropic before being absorbed. See the original TS
 /// file's comments (git history) for the derivation behind each check.
 pub fn check_validity(p: &Fpw1992Params, derived: &Fpw1992Derived) -> ValidityResult {
+    let mut reasons = Vec::new();
+    require(&mut reasons, p.mua > 0.0, "μ<sub>a</sub>", "greater than 0", p.mua);
+    require(&mut reasons, p.mus > 0.0, "μ<sub>s</sub>", "greater than 0", p.mus);
+    require(&mut reasons, (0.0..1.0).contains(&p.g), "g", "at least 0 and below 1", p.g);
+    require(&mut reasons, p.n >= 1.0, "n", "at least 1", p.n);
+    require(&mut reasons, p.p0 > 0.0, "P<sub>0</sub>", "greater than 0", p.p0);
+    let min_extent = p.lx.min(p.ly).min(p.lz);
+    require(&mut reasons, min_extent > 0.0, "the smallest grid extent", "greater than 0", min_extent);
+    if !reasons.is_empty() {
+        return ValidityResult { valid: false, reasons };
+    }
+
     let ratio = derived.musp / p.mua;
     let min_dim = p.lx.min(p.ly).min(p.lz);
     let mfp_prime = 1.0 / (p.mua + derived.musp);
@@ -79,8 +92,6 @@ pub fn check_validity(p: &Fpw1992Params, derived: &Fpw1992Derived) -> ValidityRe
     let dz = p.lz / p.nz as f64;
     let max_voxel = dx.max(dy).max(dz);
 
-    let mut reasons = Vec::new();
-
     if ratio < 10.0 {
         reasons.push(format!(
             "μ<sub>s</sub>'/μ<sub>a</sub> = {:.2} (want ≳10) — absorption is too strong \
@@ -90,10 +101,11 @@ pub fn check_validity(p: &Fpw1992Params, derived: &Fpw1992Derived) -> ValidityRe
     }
     if mfp_prime > 0.5 * min_dim {
         reasons.push(format!(
-            "transport mean free path ({:.3} cm) is ≳half the shortest slab edge \
-             ({:.3} cm) — the medium isn't large enough for a photon to scatter \
-             many times before reaching a boundary, so the diffusion (multiple-scattering) \
-             assumption breaks down",
+            "transport mean free path ({:.3} cm) is ≳half the shortest grid edge \
+             ({:.3} cm) — the medium this model assumes is semi-infinite, so the grid isn't a \
+             boundary, but everything you can see is then within a scattering length or two of \
+             the source, which is exactly where the diffusion approximation is weakest. Widen \
+             the grid, or raise μ<sub>s</sub>'",
             mfp_prime, min_dim
         ));
     }
@@ -219,6 +231,37 @@ mod tests {
             lx: 2.0, ly: 2.0, lz: 2.0,
             nx: 20, ny: 20, nz: 20,
         }
+    }
+
+    /// A non-physical optical property makes the whole volume NaN, so it has
+    /// to be reported on its own — the physics warnings below it would be
+    /// derived from the same broken numbers.
+    #[test]
+    fn nonphysical_input_is_reported_alone() {
+        let mut params = base_params("pencil", 0.0);
+        params.mua = -1.0;
+        let d = derived(&params);
+        let result = check_validity(&params, &d);
+        assert!(!result.valid);
+        assert_eq!(result.reasons.len(), 1, "got {:?}", result.reasons);
+        assert!(result.reasons[0].contains("must be greater than 0"), "{}", result.reasons[0]);
+
+        // g = 1 collapses musp to zero; n < 1 is below vacuum.
+        for (g, n) in [(1.0, 1.4), (0.9, 0.5)] {
+            let mut bad = base_params("pencil", 0.0);
+            bad.g = g;
+            bad.n = n;
+            let result = check_validity(&bad, &derived(&bad));
+            assert_eq!(result.reasons.len(), 1, "g={g} n={n}: {:?}", result.reasons);
+        }
+
+        // Sane parameters still get the ordinary physics checks.
+        let ok = base_params("pencil", 0.0);
+        let result = check_validity(&ok, &derived(&ok));
+        assert!(
+            !result.reasons.iter().any(|r| r.contains("must be")),
+            "sane params shouldn't trip an input check: {:?}", result.reasons
+        );
     }
 
     #[test]

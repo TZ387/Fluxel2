@@ -70,6 +70,9 @@ const MODEL_HELP: ModelHelp[] = [
     limits: [
       "The beam's effective source point must fall within layer 1 — the app warns if layer 1 is too thin " +
         "(or scatters too weakly) for that.",
+      "Every layer has to be at least a transport mean free path (1/&mu;<sub>s</sub>') thick. Light crossing " +
+        "a thinner layer doesn't scatter even once inside it, so diffusion says nothing about it — the app " +
+        "warns when a layer is that thin.",
       "The stack is bounded by air at both ends, so the last layer's bottom is a zero-fluence boundary just " +
         "like the top surface. Make it several penetration depths thick if you mean it as a semi-infinite " +
         "substrate rather than a finite slab.",

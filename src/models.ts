@@ -81,6 +81,10 @@ export interface ModelDef<D = any> {
   /** Rust command prefix — invokes `<command>_summary` and `<command>_volume`. */
   command: string;
   summaryLine: (derived: D, dt: string) => string;
+  /** Heading above this model's validity warnings. Per-model because the
+      models don't share an approximation: two are diffusion, one is two-flux,
+      and saying "diffusion" over Kubelka-Munk's warnings would be wrong. */
+  warningIntro: string;
   paramGroups: ParamGroup[];
 }
 
@@ -91,6 +95,12 @@ const fmt0 = (v: number) => v.toFixed(0);
 
 /* Only worth saying when the beam pattern is more than one spot. */
 const spotsSuffix = (spots: number) => (spots > 1 ? ` | ${spots} spots` : "");
+
+/* Format a derived number for a summary line. Non-physical inputs leave a
+   model's derived values NaN, which crosses the IPC boundary as JSON null —
+   so this has to survive a null and say so, or the summary throws and takes
+   the validity warnings that would explain the problem down with it. */
+const num = (v: number, digits: number) => (Number.isFinite(v) ? v.toFixed(digits) : "—");
 
 /* Shared by every point-source model's beam group (FPW1992, Liemert-Kienle)
    — same three profile choices and width meaning everywhere, so defined
@@ -166,10 +176,12 @@ export const MODELS: Record<string, ModelDef> = {
     command: "liemert_kienle",
     summaryLine: (derived: LiemertKienleDerived, dt: string) =>
       `Done in ${dt} ms — ${derived.layers.length} layer${derived.layers.length === 1 ? "" : "s"} | ` +
-      `z<sub>0</sub> = ${derived.z0.toFixed(3)} cm | L<sub>z</sub> = ${derived.Lz.toFixed(3)} cm | ` +
-      `μ<sub>s</sub>' = ${derived.layers.map((l) => l.musp.toFixed(2)).join(", ")} cm⁻¹ | ` +
-      `μ<sub>eff</sub> = ${derived.layers.map((l) => l.mueff.toFixed(3)).join(", ")} cm⁻¹` +
+      `z<sub>0</sub> = ${num(derived.z0, 3)} cm | L<sub>z</sub> = ${num(derived.Lz, 3)} cm | ` +
+      `μ<sub>s</sub>' = ${derived.layers.map((l) => num(l.musp, 2)).join(", ")} cm⁻¹ | ` +
+      `μ<sub>eff</sub> = ${derived.layers.map((l) => num(l.mueff, 3)).join(", ")} cm⁻¹` +
       spotsSuffix(derived.spots),
+
+  warningIntro: "Results may not be accurate — the diffusion approximation is weakly justified here:",
 
     /* Point source (pencil beam) through a stack of homogeneous layers —
        the combination FPW1992 (point source, one layer) and Kubelka-Munk
@@ -225,9 +237,11 @@ export const MODELS: Record<string, ModelDef> = {
     label: "Farrell, Patterson & Wilson (1992) — pencil beam, semi-infinite slab",
     command: "fpw1992",
     summaryLine: (derived: Fpw1992Derived, dt: string) =>
-      `Done in ${dt} ms — μ<sub>s</sub>' = ${derived.musp.toFixed(3)} cm⁻¹ | ` +
-      `D = ${derived.D.toFixed(4)} cm | μ<sub>eff</sub> = ${derived.mueff.toFixed(4)} cm⁻¹ | ` +
-      `δ = ${derived.delta.toFixed(3)} cm` + spotsSuffix(derived.spots),
+      `Done in ${dt} ms — μ<sub>s</sub>' = ${num(derived.musp, 3)} cm⁻¹ | ` +
+      `D = ${num(derived.D, 4)} cm | μ<sub>eff</sub> = ${num(derived.mueff, 4)} cm⁻¹ | ` +
+      `δ = ${num(derived.delta, 3)} cm` + spotsSuffix(derived.spots),
+
+  warningIntro: "Results may not be accurate — the diffusion approximation is weakly justified here:",
 
     paramGroups: [
       {
@@ -265,9 +279,11 @@ export const MODELS: Record<string, ModelDef> = {
     label: "Kubelka–Munk — two-flux, N-layer stack (diffuse illumination)",
     command: "kubelka_munk",
     summaryLine: (derived: KubelkaMunkDerived, dt: string) =>
-      `Done in ${dt} ms — R = ${derived.R_total.toFixed(4)} | ` +
-      `T = ${derived.T_total.toFixed(4)} | absorbed = ${derived.A_total.toFixed(4)} | ` +
-      `L<sub>z</sub> = ${derived.Lz.toFixed(3)} cm`,
+      `Done in ${dt} ms — R = ${num(derived.R_total, 4)} | ` +
+      `T = ${num(derived.T_total, 4)} | absorbed = ${num(derived.A_total, 4)} | ` +
+      `L<sub>z</sub> = ${num(derived.Lz, 3)} cm`,
+
+  warningIntro: "Results may not be accurate — the two-flux approximation is weakly justified here:",
 
     /* Unlike FPW1992's pencil beam, KM assumes broad diffuse
        illumination uniform over the top face, so there's no lateral

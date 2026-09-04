@@ -71,6 +71,7 @@
 //! an effectively semi-infinite substrate.
 
 use crate::physics::beam::{self, BeamPattern, BeamProfile, Grid};
+use crate::physics::validity::require;
 use crate::physics::bessel::{j0, j0_zero, j1};
 use serde::{Deserialize, Serialize};
 
@@ -240,7 +241,38 @@ pub fn derived(p: &LiemertKienleParams) -> LiemertKienleDerived {
 pub fn check_validity(p: &LiemertKienleParams, derived: &LiemertKienleDerived) -> ValidityResult {
     let mut reasons = Vec::new();
 
+    for (i, l) in p.layers.iter().enumerate() {
+        let at = |name: &str| format!("layer {}: {}", i + 1, name);
+        require(&mut reasons, l.mua > 0.0, &at("μ<sub>a</sub>"), "greater than 0", l.mua);
+        require(&mut reasons, l.mus > 0.0, &at("μ<sub>s</sub>"), "greater than 0", l.mus);
+        require(&mut reasons, (0.0..1.0).contains(&l.g), &at("g"), "at least 0 and below 1", l.g);
+        require(&mut reasons, l.n >= 1.0, &at("n"), "at least 1", l.n);
+        require(&mut reasons, l.thickness > 0.0, &at("thickness"), "greater than 0", l.thickness);
+    }
+    require(&mut reasons, p.p0 > 0.0, "P<sub>0</sub>", "greater than 0", p.p0);
+    let min_extent = p.lx.min(p.ly);
+    require(&mut reasons, min_extent > 0.0, "the smaller of L<sub>x</sub>, L<sub>y</sub>", "greater than 0", min_extent);
+    if !reasons.is_empty() {
+        return ValidityResult { valid: false, reasons };
+    }
+
     for (i, (l, d)) in p.layers.iter().zip(derived.layers.iter()).enumerate() {
+        // Diffusion describes light that has scattered many times. A layer
+        // thinner than a single transport mean free path (1/μs' in this
+        // model's convention) can't do that even once.
+        let mfp = 1.0 / d.musp;
+        if l.thickness < mfp {
+            reasons.push(format!(
+                "layer {}: thickness {:.3} cm is under one transport mean free path \
+                 ({:.3} cm) — light can't scatter even once while crossing it, so the diffusion \
+                 approximation says nothing meaningful about this layer. Make it thicker, raise \
+                 its μ<sub>s</sub>', or merge it into a neighbour",
+                i + 1,
+                l.thickness,
+                mfp
+            ));
+        }
+
         let ratio = d.musp / l.mua;
         if ratio < 10.0 {
             reasons.push(format!(
@@ -990,6 +1022,55 @@ mod tests {
         }
     }
 
+    /// Diffusion needs many scattering events; a layer under one transport
+    /// mean free path thick can't supply even one. Easy to build now that
+    /// every layer has its own thickness slider.
+    #[test]
+    fn layer_thinner_than_a_mean_free_path_is_flagged() {
+        // musp = 10 cm^-1 -> mfp' = 0.1 cm, so 0.02 cm is a fifth of one.
+        let thin = params(vec![
+            layer(0.1, 100.0, 0.9, 1.4, 0.3),
+            layer(0.1, 100.0, 0.9, 1.4, 0.02),
+            layer(0.1, 100.0, 0.9, 1.4, 1.0),
+        ]);
+        let result = check_validity(&thin, &derived(&thin));
+        let hits: Vec<_> = result
+            .reasons
+            .iter()
+            .filter(|r| r.contains("transport mean free path"))
+            .collect();
+        assert_eq!(hits.len(), 1, "expected exactly layer 2 flagged, got {:?}", result.reasons);
+        assert!(hits[0].contains("layer 2"), "{}", hits[0]);
+
+        let ok = params(vec![
+            layer(0.1, 100.0, 0.9, 1.4, 0.3),
+            layer(0.1, 100.0, 0.9, 1.4, 1.7),
+        ]);
+        let result = check_validity(&ok, &derived(&ok));
+        assert!(
+            !result.reasons.iter().any(|r| r.contains("transport mean free path")),
+            "ordinary layers shouldn't be flagged: {:?}", result.reasons
+        );
+    }
+
+    /// Non-physical inputs make the volume all-NaN, so they're reported on
+    /// their own rather than buried under the physics warnings.
+    #[test]
+    fn nonphysical_layer_input_is_reported_alone() {
+        for bad in [
+            layer(-1.0, 100.0, 0.9, 1.4, 0.3),
+            layer(0.1, 0.0, 0.9, 1.4, 0.3),
+            layer(0.1, 100.0, 1.0, 1.4, 0.3),
+            layer(0.1, 100.0, 0.9, 0.5, 0.3),
+            layer(0.1, 100.0, 0.9, 1.4, 0.0),
+        ] {
+            let p = params(vec![bad, layer(0.1, 50.0, 0.9, 1.4, 1.7)]);
+            let result = check_validity(&p, &derived(&p));
+            assert_eq!(result.reasons.len(), 1, "got {:?}", result.reasons);
+            assert!(result.reasons[0].starts_with("layer 1:"), "{}", result.reasons[0]);
+        }
+    }
+
     /// Warnings name the layer by index, and Lz follows the stack rather than
     /// a separate grid-depth parameter.
     #[test]
@@ -1101,3 +1182,4 @@ mod perf_and_sanity {
         );
     }
 }
+

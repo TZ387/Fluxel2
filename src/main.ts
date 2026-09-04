@@ -202,7 +202,7 @@ async function runAndRender(): Promise<void> {
     const warn = document.createElement("div");
     warn.className = "status-warn";
     const intro = document.createElement("p");
-    intro.textContent = "⚠ Results may not be accurate — diffusion approximation is weakly justified here:";
+    intro.textContent = `⚠ ${model.warningIntro}`;
     warn.appendChild(intro);
     reasons.forEach((reason) => {
       /* innerHTML, not textContent: these carry <sub> markup, and they're

@@ -4,6 +4,7 @@
 //! removed — this is the single source of truth for the physics). See that
 //! file's git history for the full derivation notes behind each equation.
 
+use crate::physics::validity::require;
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Clone, Copy)]
@@ -167,6 +168,38 @@ pub fn check_validity(p: &KubelkaMunkParams, derived: &KubelkaMunkDerived) -> Va
     let mut reasons = Vec::new();
 
     for (i, l) in p.layers.iter().enumerate() {
+        let at = |name: &str| format!("Layer {}: {}", i + 1, name);
+        // K must be strictly positive, not merely non-negative: b = sqrt(a²-1)
+        // is zero for a non-absorbing layer, which takes R and T to 0/0.
+        require(&mut reasons, l.mua > 0.0, &at("K"), "greater than 0", l.mua);
+        require(&mut reasons, l.mus > 0.0, &at("S"), "greater than 0", l.mus);
+        require(&mut reasons, l.thickness > 0.0, &at("thickness"), "greater than 0", l.thickness);
+    }
+    require(&mut reasons, p.p0 > 0.0, "P<sub>0</sub>", "greater than 0", p.p0);
+    let area = p.lx * p.ly;
+    require(&mut reasons, area > 0.0, "the illuminated area L<sub>x</sub>·L<sub>y</sub>", "greater than 0", area);
+    if !reasons.is_empty() {
+        return ValidityResult { valid: false, reasons };
+    }
+
+    // The depth profile is sampled on nz voxels spanning the whole stack, so a
+    // layer thinner than one voxel can be stepped straight over. The other two
+    // models warn about their own grid resolution; this is the equivalent.
+    let dz = derived.lz / p.nz as f64;
+    for (i, l) in p.layers.iter().enumerate() {
+        if l.thickness < dz {
+            reasons.push(format!(
+                "Layer {}: thickness {:.3} cm is under one depth voxel ({:.3} cm) — the profile \
+                 is sampled too coarsely to show this layer at all, however strongly it absorbs. \
+                 Increase N<sub>z</sub>",
+                i + 1,
+                l.thickness,
+                dz
+            ));
+        }
+    }
+
+    for (i, l) in p.layers.iter().enumerate() {
         let ratio = l.mus / l.mua;
         let LayerAlone { gamma, .. } = km_layer_alone(l.mua, l.mus, l.thickness);
 
@@ -264,3 +297,57 @@ pub fn compute_volume(p: &KubelkaMunkParams) -> (Vec<f32>, Vec<f32>) {
 
     (phi, abs)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn layer(mua: f64, mus: f64, thickness: f64) -> KMLayerParams {
+        KMLayerParams { mua, mus, thickness }
+    }
+
+    fn params(layers: Vec<KMLayerParams>, nz: usize) -> KubelkaMunkParams {
+        KubelkaMunkParams { lx: 2.0, ly: 2.0, nx: 8, ny: 8, nz, p0: 1.0, layers }
+    }
+
+    /// K = 0 is a perfectly reasonable thing to ask for — a non-absorbing
+    /// layer — but it takes b = sqrt(a²-1) to zero and R, T to 0/0, so the
+    /// whole profile comes back NaN. It has to be caught, not just survived.
+    #[test]
+    fn nonphysical_input_is_reported_alone() {
+        for bad in [layer(0.0, 50.0, 0.5), layer(-1.0, 50.0, 0.5), layer(0.1, 0.0, 0.5), layer(0.1, 50.0, 0.0)] {
+            let p = params(vec![bad], 20);
+            let result = check_validity(&p, &derived(&p));
+            assert_eq!(result.reasons.len(), 1, "got {:?}", result.reasons);
+            assert!(result.reasons[0].starts_with("Layer 1:"), "{}", result.reasons[0]);
+        }
+
+        let ok = params(vec![layer(0.1, 50.0, 0.5)], 20);
+        let result = check_validity(&ok, &derived(&ok));
+        assert!(
+            !result.reasons.iter().any(|r| r.contains("must be")),
+            "sane params shouldn't trip an input check: {:?}", result.reasons
+        );
+    }
+
+    /// A layer thinner than one depth voxel is stepped straight over, so it
+    /// leaves no trace in the profile no matter how strongly it absorbs.
+    #[test]
+    fn layer_thinner_than_a_depth_voxel_is_flagged() {
+        // Lz = 2.02 over 10 voxels -> dz = 0.202 cm; the middle layer is 0.02.
+        let p = params(vec![layer(0.1, 50.0, 1.0), layer(3.0, 50.0, 0.02), layer(0.1, 50.0, 1.0)], 10);
+        let result = check_validity(&p, &derived(&p));
+        let hits: Vec<_> = result.reasons.iter().filter(|r| r.contains("depth voxel")).collect();
+        assert_eq!(hits.len(), 1, "expected layer 2 flagged, got {:?}", result.reasons);
+        assert!(hits[0].contains("Layer 2"), "{}", hits[0]);
+
+        // Same stack, enough depth voxels to resolve it.
+        let fine = params(vec![layer(0.1, 50.0, 1.0), layer(3.0, 50.0, 0.02), layer(0.1, 50.0, 1.0)], 400);
+        let result = check_validity(&fine, &derived(&fine));
+        assert!(
+            !result.reasons.iter().any(|r| r.contains("depth voxel")),
+            "a resolved layer shouldn't be flagged: {:?}", result.reasons
+        );
+    }
+}
+
