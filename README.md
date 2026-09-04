@@ -1,13 +1,12 @@
 # Fluxel2
 
-An experiment in porting [Fluxel](https://github.com/TZ387/Fluxel) — a browser-based simulator for light transport in
-biological tissue (diffusion approximation) — into a Tauri desktop app, targeting Linux and Windows.
+A Tauri desktop app (TypeScript frontend + Rust backend) for simulating light transport in biological tissue
+(diffusion approximation), targeting Linux and Windows — a schema-driven parameter UI, a 3-slice volume
+renderer, and three theoretical models (see Models below). See [AGENTS.md](AGENTS.md) for the current layout.
 
-Fluxel itself is a static HTML/CSS/vanilla-JS app with no build step; this project reworks it as a proper desktop
-build (TypeScript frontend + Rust backend via Tauri) rather than something you just open in a browser.
-
-Work in progress — the parameter UI, 3-slice volume renderer, and three theoretical models (two ported from
-Fluxel, one added beyond it) are in; see [AGENTS.md](AGENTS.md) for the current layout.
+It started as a port of [Fluxel](https://github.com/TZ387/Fluxel), a static, build-free HTML/CSS/vanilla-JS
+browser simulator covering the same physics, but has since grown well beyond it: a third model
+(Liemert & Kienle 2010) and the beam-shaping features described below have no Fluxel counterpart.
 
 ## AI-assisted development
 
