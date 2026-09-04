@@ -289,6 +289,16 @@ fn build_root_table() -> RootTable {
     RootTable { roots, inv_j1_sq }
 }
 
+/// build_root_table(), computed once for the life of the process and reused
+/// by every subsequent compute_volume() call — the roots are pure
+/// mathematical constants (zeros of J0), independent of any model parameter,
+/// so redoing MAX_TERMS Newton refinements on every click is wasted work.
+static ROOT_TABLE: std::sync::OnceLock<RootTable> = std::sync::OnceLock::new();
+
+fn root_table() -> &'static RootTable {
+    ROOT_TABLE.get_or_init(build_root_table)
+}
+
 /// Consecutive below-tolerance terms required before fluence_kernel's series
 /// sum is considered converged (rather than just one). A plain pencil beam's
 /// terms already oscillate (via J0(sn*rho)) while decaying, and a flat-top
@@ -349,7 +359,7 @@ pub fn compute_volume(p: &LiemertKienleParams) -> (Vec<f32>, Vec<f32>) {
     let t2 = (p.lz - p.t1).max(1e-9);
     let a_prime = cylinder_radius(p.lx, p.ly) + l1.zb;
     let geom = Geometry { l1, l2, z0, t1, t2, a_prime };
-    let roots = build_root_table();
+    let roots = root_table();
     let beam = beam::BeamProfile::from_params(&p.beam_profile, p.beam_width);
     let dz = p.lz / p.nz as f64;
 
@@ -362,7 +372,7 @@ pub fn compute_volume(p: &LiemertKienleParams) -> (Vec<f32>, Vec<f32>) {
         dz,
         p.p0,
         |z| if z <= t1 { l1.mua } else { l2.mua },
-        |rho, z| fluence_kernel(rho, z, &geom, &roots, &beam),
+        |rho, z| fluence_kernel(rho, z, &geom, roots, &beam),
     )
 }
 
