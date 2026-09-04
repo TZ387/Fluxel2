@@ -1,5 +1,12 @@
 /* ================================================================
    COLORMAP  (deep-blue → cyan → green → yellow → red)
+   ================================================================
+   Sampled once into a lookup table. drawSlices needs a colour per
+   pixel — hundreds of thousands per redraw, and a redraw runs on
+   every slider drag — where walking the stop list and allocating a
+   triple to hold the answer cost about ten times what a table read
+   does. 1024 steps keeps the largest departure from the continuous
+   ramp at 1/255: the rounding floor of the 8-bit channels it feeds.
    ================================================================ */
 type RGB = [number, number, number];
 type Stop = [number, RGB];
@@ -14,7 +21,10 @@ const CMAP_STOPS: Stop[] = [
   [1.0, [180, 10, 10]],
 ];
 
-function colormap(t: number): RGB {
+const CMAP_LEVELS = 1024;
+
+/** Interpolate the stops directly — only used to build the table below. */
+function colormapExact(t: number): RGB {
   t = Math.max(0.0, Math.min(1.0, t));
   let lo = CMAP_STOPS[0],
     hi = CMAP_STOPS[CMAP_STOPS.length - 1];
@@ -27,6 +37,24 @@ function colormap(t: number): RGB {
   }
   const f = (t - lo[0]) / (hi[0] - lo[0] + 1e-15);
   return lo[1].map((v, i) => Math.round(v + (hi[1][i] - v) * f)) as RGB;
+}
+
+const CMAP_LUT: Uint8Array = (() => {
+  const lut = new Uint8Array(CMAP_LEVELS * 3);
+  for (let i = 0; i < CMAP_LEVELS; i++) {
+    const [r, g, b] = colormapExact(i / (CMAP_LEVELS - 1));
+    lut[i * 3] = r;
+    lut[i * 3 + 1] = g;
+    lut[i * 3 + 2] = b;
+  }
+  return lut;
+})();
+
+/** Where t's colour starts in CMAP_LUT. Clamping t before scaling keeps the
+    index in range for anything callers pass, NaN included. */
+function cmapOffset(t: number): number {
+  const c = t > 0 ? (t < 1 ? t : 1) : 0;
+  return ((c * (CMAP_LEVELS - 1) + 0.5) | 0) * 3;
 }
 
 /* ================================================================
@@ -47,8 +75,8 @@ export function drawColorbar(
   cv.height = h;
   const ctx = cv.getContext("2d")!;
   for (let i = 0; i < h; i++) {
-    const [r, g, b] = colormap(1 - i / h);
-    ctx.fillStyle = `rgb(${r},${g},${b})`;
+    const k = cmapOffset(1 - i / h);
+    ctx.fillStyle = `rgb(${CMAP_LUT[k]},${CMAP_LUT[k + 1]},${CMAP_LUT[k + 2]})`;
     ctx.fillRect(0, i, w, 1);
   }
   const fmtSci = (v: number) => {
@@ -138,12 +166,11 @@ export function drawSlices(
       const vc = Math.min(rows - 1, Math.floor((py * rows) / rh));
       for (let px = 0; px < rw; px++) {
         const uc = Math.min(cols - 1, Math.floor((px * cols) / rw));
-        const t = (sampleFn(uc, vc) - logMin) / range;
-        const [r, g, b] = colormap(t);
+        const k = cmapOffset((sampleFn(uc, vc) - logMin) / range);
         const i = (py * rw + px) * 4;
-        d[i] = r;
-        d[i + 1] = g;
-        d[i + 2] = b;
+        d[i] = CMAP_LUT[k];
+        d[i + 1] = CMAP_LUT[k + 1];
+        d[i + 2] = CMAP_LUT[k + 2];
         d[i + 3] = 255;
       }
     }
