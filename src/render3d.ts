@@ -90,6 +90,7 @@ const EDGE_INK = "rgba(120,150,185,0.45)";
 const SILHOUETTE_INK = "rgba(150,180,215,0.8)";
 const FACE_TINT = ["rgba(255,255,255,0.02)", "rgba(255,255,255,0.05)", "rgba(255,255,255,0.035)"];
 const AXIS_INK = "rgba(190,205,225,0.8)";
+const CROSSHAIR_INK = "rgba(88,166,255,0.55)";
 const INTERFACE_INK = "rgba(255,255,255,0.4)";
 const TICK_FONT = "11px monospace";
 const TITLE_FONT = "bold 12px monospace";
@@ -132,6 +133,49 @@ const dot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 
 function project(pr: Projector, p: V3): [number, number] {
   return [pr.ox + pr.s * dot(p, pr.right), pr.oy - pr.s * dot(p, pr.up)];
+}
+
+/** The box in the display frame: x and y centred on the beam axis, and depth
+    negated so that screen-up is up and the tissue surface is the top face. */
+function bounds(scene: SliceScene): { lo: V3; hi: V3 } | null {
+  const { lx, ly, lz } = scene;
+  if (!(lx > 0) || !(ly > 0) || !(lz > 0)) return null;
+  return { lo: [-lx / 2, -ly / 2, -lz], hi: [lx / 2, ly / 2, 0] };
+}
+
+/** The slice planes' meeting point, in the display frame. */
+function displayCenter(scene: SliceScene): V3 {
+  const c = sliceCenters(scene);
+  return [c.x, c.y, -c.z];
+}
+
+/** Fit the box to the canvas at equal aspect — so a 0.3 cm epidermis over a
+    1.7 cm dermis is drawn as the thin layer it is, rather than stretched to
+    fill the box. Returns null when there is no room to draw in. */
+function projector(lo: V3, hi: V3, cam: Camera, W: number, H: number): Projector | null {
+  const b = basis(cam);
+  const fit: Projector = { ...b, s: 1, ox: 0, oy: 0 };
+  let minX = Infinity,
+    maxX = -Infinity,
+    minY = Infinity,
+    maxY = -Infinity;
+  for (let c = 0; c < 8; c++) {
+    const [px, py] = project(fit, corner(lo, hi, c));
+    minX = Math.min(minX, px);
+    maxX = Math.max(maxX, px);
+    minY = Math.min(minY, py);
+    maxY = Math.max(maxY, py);
+  }
+  const availW = W - 2 * M_SIDE;
+  const availH = H - M_TOP - M_BOT;
+  if (availW < 40 || availH < 40) return null;
+  const s = Math.min(availW / (maxX - minX), availH / (maxY - minY));
+  return {
+    ...b,
+    s,
+    ox: M_SIDE + availW / 2 - ((minX + maxX) / 2) * s,
+    oy: M_TOP + availH / 2 - ((minY + maxY) / 2) * s,
+  };
 }
 
 /* ================================================================
@@ -373,40 +417,14 @@ export function drawBox3D(
   ctx.fillStyle = PANEL_BG;
   ctx.fillRect(0, 0, W, H);
 
-  const { view, lx, ly, lz } = scene;
-  if (!(lx > 0) || !(ly > 0) || !(lz > 0)) return;
+  const { view, lz } = scene;
+  const box = bounds(scene);
+  if (!box) return;
+  const { lo, hi } = box;
+  const pr = projector(lo, hi, cam, W, H);
+  if (!pr) return;
 
-  /* Equal aspect: a 0.3 cm epidermis over a 1.7 cm dermis is drawn as the
-     thin layer it is, rather than stretched to fill the box. */
-  const lo: V3 = [-lx / 2, -ly / 2, -lz];
-  const hi: V3 = [lx / 2, ly / 2, 0];
-
-  const b = basis(cam);
-  const fit: Projector = { ...b, s: 1, ox: 0, oy: 0 };
-  let minX = Infinity,
-    maxX = -Infinity,
-    minY = Infinity,
-    maxY = -Infinity;
-  for (let c = 0; c < 8; c++) {
-    const [px, py] = project(fit, corner(lo, hi, c));
-    minX = Math.min(minX, px);
-    maxX = Math.max(maxX, px);
-    minY = Math.min(minY, py);
-    maxY = Math.max(maxY, py);
-  }
-  const availW = W - 2 * M_SIDE;
-  const availH = H - M_TOP - M_BOT;
-  if (availW < 40 || availH < 40) return;
-  const s = Math.min(availW / (maxX - minX), availH / (maxY - minY));
-  const pr: Projector = {
-    ...b,
-    s,
-    ox: M_SIDE + availW / 2 - ((minX + maxX) / 2) * s,
-    oy: M_TOP + availH / 2 - ((minY + maxY) / 2) * s,
-  };
-
-  const c = sliceCenters(scene);
-  const ctr: V3 = [c.x, c.y, -c.z];
+  const ctr = displayCenter(scene);
   const { edges } = classifyEdges(lo, hi, pr);
   const ctrProj = project(pr, [0, 0, -lz / 2]);
 
@@ -535,6 +553,28 @@ export function drawBox3D(
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.restore();
   });
+
+  /* Crosshairs: the three lines where the planes cut each other. The seams
+     between quads are invisible — the same field continues across them — so
+     without these there is nothing to say where the cuts actually are, and the
+     arrangement reads as one shape rather than three planes. Same accent
+     colour the flat layout uses for the same purpose. */
+  ctx.strokeStyle = CROSSHAIR_INK;
+  ctx.lineWidth = 1;
+  for (let axis = 0; axis < 3; axis++) {
+    /* The line along `axis` through the meeting point: the two planes that do
+       not span it intersect here. */
+    const a: V3 = [...ctr];
+    const b2: V3 = [...ctr];
+    a[axis] = lo[axis];
+    b2[axis] = hi[axis];
+    const [ax, ay] = project(pr, a);
+    const [bx, by] = project(pr, b2);
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(bx, by);
+    ctx.stroke();
+  }
 
   /* The silhouette re-stroked over the slices, so the box keeps a crisp
      outline where the planes run out to meet it. */

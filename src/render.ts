@@ -238,6 +238,10 @@ const VALIDITY_COLORS: RGB[] = [
 const PANEL_BG = "#080c14";
 const AXIS_INK = "rgba(190,205,225,0.75)";
 const GRID_INK = "rgba(120,150,185,0.35)";
+const INTERFACE_INK = "rgba(255,255,255,0.55)";
+/* styles.css's --accent, dimmed: distinct from both the axis ink and the white
+   dashes the layer interfaces use. */
+const CROSSHAIR_INK = "rgba(88,166,255,0.55)";
 const TICK_FONT = "11px monospace";
 const TITLE_FONT = "bold 12px monospace";
 
@@ -534,6 +538,59 @@ const MT = 8;
 const MR = 18;
 const GAP = 10;
 
+/** Which world axis each panel holds fixed, and which run across and down its
+    image. Axis numbering is the scene's: 0 = x, 1 = y, 2 = depth. */
+const PANEL_AXES: Record<SliceAxis, { fixed: number; h: number; v: number }> = {
+  0: { fixed: 0, h: 1, v: 2 },
+  1: { fixed: 1, h: 0, v: 2 },
+  2: { fixed: 2, h: 0, v: 1 },
+};
+
+const AXIS_NAMES = ["x", "y", "z"] as const;
+
+interface FlatPanel {
+  axis: SliceAxis;
+  /** Which slice of that axis, as a voxel index. */
+  index: number;
+  ox: number;
+  oy: number;
+  w: number;
+  h: number;
+  /** World range spanned across the panel, and down it. */
+  hRange: [number, number];
+  vRange: [number, number];
+  /** Whether this panel carries the labels for its vertical axis — the two
+      top panels share a depth axis, so only the left one does. */
+  withVAxis: boolean;
+}
+
+/** Where the three panels sit, or null when there is no room for them.
+    Shared by the renderer and by pickFlat, so that what the mouse reports and
+    what the screen shows cannot drift apart. */
+function flatLayout(scene: SliceScene, W: number, H: number): FlatPanel[] | null {
+  const w = Math.floor((W - ML - MR - GAP) / 2);
+  const h = Math.floor((H - MT - 2 * MB - GAP) / 2);
+  /* Below this the panels are narrower than their own axis labels, so there is
+     nothing to read; an empty canvas says that more honestly than three
+     unreadable slivers would. */
+  if (w < 40 || h < 40) return null;
+
+  const ranges: [number, number][] = [
+    [-scene.lx / 2, scene.lx / 2],
+    [-scene.ly / 2, scene.ly / 2],
+    [0, scene.lz],
+  ];
+  const at = (axis: SliceAxis, index: number, ox: number, oy: number, withVAxis: boolean): FlatPanel => {
+    const { h: ha, v: va } = PANEL_AXES[axis];
+    return { axis, index, ox, oy, w, h, hRange: ranges[ha], vRange: ranges[va], withVAxis };
+  };
+  return [
+    at(0, scene.ix, ML, MT, true),
+    at(1, scene.iy, ML + w + GAP, MT, false),
+    at(2, scene.iz, ML, MT + h + MB + GAP, true),
+  ];
+}
+
 export function drawSlices(cvId: string, scene: SliceScene, cache: PlaneCache): void {
   const cv = document.getElementById(cvId) as HTMLCanvasElement;
   const W = cv.width || cv.offsetWidth || 400;
@@ -546,37 +603,27 @@ export function drawSlices(cvId: string, scene: SliceScene, cache: PlaneCache): 
   ctx.fillStyle = PANEL_BG;
   ctx.fillRect(0, 0, W, H);
 
-  const { view, lx, ly, lz } = scene;
-  const half = Math.floor((W - ML - MR - GAP) / 2);
-  const vhalf = Math.floor((H - MT - 2 * MB - GAP) / 2);
-  /* Below this the panels are narrower than their own axis labels, so there is
-     nothing to read; an empty canvas says that more honestly than three
-     unreadable slivers would. */
-  if (half < 40 || vhalf < 40) return;
+  const panels = flatLayout(scene, W, H);
+  if (!panels) return;
 
+  const { view, lz } = scene;
   const c = sliceCenters(scene);
+  const centers = [c.x, c.y, c.z];
   setSmoothing(ctx, view);
 
-  /* One panel: the plane image scaled into its rect, a border, ticks on the
-     axes it owns, layer interfaces if its vertical axis is depth, and a
-     label saying which plane it is and where. */
-  function panel(
-    ox: number,
-    oy: number,
-    axis: SliceAxis,
-    index: number,
-    hRange: [number, number],
-    vRange: [number, number],
-    hName: string,
-    vName: string,
-    withVAxis: boolean,
-    title: string
-  ): void {
-    ctx.drawImage(planeCanvas(cache, view, axis, index), ox, oy, half, vhalf);
+  panels.forEach((p) => {
+    const { fixed, h: ha, v: va } = PANEL_AXES[p.axis];
+    const hName = AXIS_NAMES[ha];
+    const vName = AXIS_NAMES[va];
+    /** World coordinate to a pixel, along the panel's two directions. */
+    const hPx = (val: number) => p.ox + ((val - p.hRange[0]) / (p.hRange[1] - p.hRange[0])) * p.w;
+    const vPx = (val: number) => p.oy + ((val - p.vRange[0]) / (p.vRange[1] - p.vRange[0])) * p.h;
+
+    ctx.drawImage(planeCanvas(cache, view, p.axis, p.index), p.ox, p.oy, p.w, p.h);
 
     ctx.strokeStyle = GRID_INK;
     ctx.lineWidth = 1;
-    ctx.strokeRect(ox + 0.5, oy + 0.5, half - 1, vhalf - 1);
+    ctx.strokeRect(p.ox + 0.5, p.oy + 0.5, p.w - 1, p.h - 1);
 
     ctx.font = TICK_FONT;
     ctx.fillStyle = AXIS_INK;
@@ -585,37 +632,37 @@ export function drawSlices(cvId: string, scene: SliceScene, cache: PlaneCache): 
     /* Horizontal axis, along the bottom. */
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    const hTicks = niceTicks(hRange[0], hRange[1], 4);
+    const hTicks = niceTicks(p.hRange[0], p.hRange[1], 4);
     const hText = tickLabels(hTicks);
-    hTicks.forEach((v, i) => {
-      const px = ox + ((v - hRange[0]) / (hRange[1] - hRange[0])) * half;
+    hTicks.forEach((val, i) => {
+      const px = hPx(val);
       ctx.beginPath();
-      ctx.moveTo(px, oy + vhalf);
-      ctx.lineTo(px, oy + vhalf + 3);
+      ctx.moveTo(px, p.oy + p.h);
+      ctx.lineTo(px, p.oy + p.h + 3);
       ctx.stroke();
-      ctx.fillText(hText[i], px, oy + vhalf + 5);
+      ctx.fillText(hText[i], px, p.oy + p.h + 5);
     });
     ctx.font = TITLE_FONT;
-    ctx.fillText(`${hName} [cm]`, ox + half / 2, oy + vhalf + 16);
+    ctx.fillText(`${hName} [cm]`, p.ox + p.w / 2, p.oy + p.h + 16);
 
     /* Vertical axis, down the left — only on the panels that own one. */
-    if (withVAxis) {
+    if (p.withVAxis) {
       ctx.font = TICK_FONT;
       ctx.textAlign = "right";
       ctx.textBaseline = "middle";
-      const vTicks = niceTicks(vRange[0], vRange[1], 4);
+      const vTicks = niceTicks(p.vRange[0], p.vRange[1], 4);
       const vText = tickLabels(vTicks);
-      vTicks.forEach((v, i) => {
-        const py = oy + ((v - vRange[0]) / (vRange[1] - vRange[0])) * vhalf;
+      vTicks.forEach((val, i) => {
+        const py = vPx(val);
         ctx.beginPath();
-        ctx.moveTo(ox - 3, py);
-        ctx.lineTo(ox, py);
+        ctx.moveTo(p.ox - 3, py);
+        ctx.lineTo(p.ox, py);
         ctx.stroke();
-        ctx.fillText(vText[i], ox - 5, py);
+        ctx.fillText(vText[i], p.ox - 5, py);
       });
       ctx.save();
       ctx.font = TITLE_FONT;
-      ctx.translate(ox - ML + 9, oy + vhalf / 2);
+      ctx.translate(p.ox - ML + 9, p.oy + p.h / 2);
       ctx.rotate(-Math.PI / 2);
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
@@ -624,26 +671,44 @@ export function drawSlices(cvId: string, scene: SliceScene, cache: PlaneCache): 
     }
 
     /* Layer interfaces, where the vertical axis is depth. */
-    if (vName === "z" && scene.interfaces.length) {
+    if (va === 2 && scene.interfaces.length) {
       ctx.save();
-      ctx.strokeStyle = "rgba(255,255,255,0.55)";
+      ctx.strokeStyle = INTERFACE_INK;
       ctx.lineWidth = 1;
       ctx.setLineDash([4, 3]);
       scene.interfaces.forEach((d) => {
         if (d <= 0 || d >= lz) return;
-        const py = Math.round(oy + (d / lz) * vhalf) + 0.5;
+        const py = Math.round(vPx(d)) + 0.5;
         ctx.beginPath();
-        ctx.moveTo(ox, py);
-        ctx.lineTo(ox + half, py);
+        ctx.moveTo(p.ox, py);
+        ctx.lineTo(p.ox + p.w, py);
         ctx.stroke();
       });
       ctx.restore();
     }
 
+    /* Crosshairs: where the *other* two planes cut this one. Without them the
+       three panels are three unrelated pictures — this is what says the bright
+       spot on one is the bright spot on the next. Solid and accent-coloured so
+       they are not mistaken for the dashed white layer interfaces. */
+    ctx.strokeStyle = CROSSHAIR_INK;
+    ctx.lineWidth = 1;
+    const cross = (px: number, py: number) => {
+      ctx.beginPath();
+      ctx.moveTo(Math.round(px) + 0.5, p.oy);
+      ctx.lineTo(Math.round(px) + 0.5, p.oy + p.h);
+      ctx.moveTo(p.ox, Math.round(py) + 0.5);
+      ctx.lineTo(p.ox + p.w, Math.round(py) + 0.5);
+      ctx.stroke();
+    };
+    cross(hPx(centers[ha]), vPx(centers[va]));
+
     /* A light halo behind the dark fill keeps the label legible against the
        colormap's own near-black low end, where plain fillText disappeared.
        Dropped rather than run past the panel edge when the panel is too narrow
        for it — it sits *on* the data, so a clipped one is worse than none. */
+    const plane = (hName + vName).toUpperCase(); // YZ, XZ, XY
+    const title = `${plane} ${AXIS_NAMES[fixed]}=${centers[fixed].toFixed(3)}`;
     ctx.font = "bold 13px monospace";
     ctx.lineJoin = "round";
     ctx.lineWidth = 3;
@@ -651,19 +716,10 @@ export function drawSlices(cvId: string, scene: SliceScene, cache: PlaneCache): 
     ctx.textBaseline = "alphabetic";
     ctx.strokeStyle = "rgba(255,255,255,0.6)";
     ctx.fillStyle = "rgba(12,13,15,0.92)";
-    if (ctx.measureText(title).width + 8 <= half) {
-      ctx.strokeText(title, ox + 4, oy + 14);
-      ctx.fillText(title, ox + 4, oy + 14);
+    if (ctx.measureText(title).width + 8 <= p.w) {
+      ctx.strokeText(title, p.ox + 4, p.oy + 14);
+      ctx.fillText(title, p.ox + 4, p.oy + 14);
     }
     ctx.fillStyle = AXIS_INK;
-  }
-
-  const xR: [number, number] = [-lx / 2, lx / 2];
-  const yR: [number, number] = [-ly / 2, ly / 2];
-  const zR: [number, number] = [0, lz];
-  const row2 = MT + vhalf + MB + GAP;
-
-  panel(ML, MT, 0, scene.ix, yR, zR, "y", "z", true, `YZ x=${c.x.toFixed(3)}`);
-  panel(ML + half + GAP, MT, 1, scene.iy, xR, zR, "x", "z", false, `XZ y=${c.y.toFixed(3)}`);
-  panel(ML, row2, 2, scene.iz, xR, yR, "x", "y", true, `XY z=${c.z.toFixed(3)}`);
+  });
 }
