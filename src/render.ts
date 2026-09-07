@@ -62,11 +62,12 @@ function cmapOffset(t: number): number {
    ================================================================
    An alternate, discrete colouring for the same slices: instead of the
    computed field, shows how far each voxel sits from breaking the
-   diffusion approximation's isotropy assumption (see fpw1992.rs's
-   compute_validity_volume for exactly how the codes are decided — this
-   file only knows how to colour them). Colours mirror the app's own
-   warning palette (styles.css --danger/--warn/--accent2) so "invalid"
-   here reads the same as everywhere else in the UI.
+   diffusion approximation's isotropy assumption (see fpw1992.rs's and
+   liemert_kienle.rs's compute_validity_volume for exactly how the codes
+   are decided per model — this file only knows how to colour them, the
+   same way regardless of which model produced them). Colours mirror the
+   app's own warning palette (styles.css --danger/--warn/--accent2) so
+   "invalid" here reads the same as everywhere else in the UI.
    ================================================================ */
 const VALIDITY_COLORS: RGB[] = [
   [248, 81, 73], // 0 invalid  — --danger

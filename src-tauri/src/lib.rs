@@ -83,7 +83,8 @@ fn liemert_kienle_summary(params: LiemertKienleParams) -> Summary<LiemertKienleD
 #[tauri::command(async)]
 fn liemert_kienle_volume(params: LiemertKienleParams) -> Response {
     let (phi, abs) = liemert_kienle::compute_volume(&params);
-    volume_bytes(phi, abs, None)
+    let validity = liemert_kienle::compute_validity_volume(&params);
+    volume_bytes(phi, abs, Some(validity))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

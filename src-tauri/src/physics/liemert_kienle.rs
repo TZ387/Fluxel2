@@ -548,6 +548,73 @@ pub fn compute_volume(p: &LiemertKienleParams) -> (Vec<f32>, Vec<f32>) {
     )
 }
 
+/// Per-voxel diffusion-validity code for the "show validity" overlay — same
+/// idea as fpw1992.rs's compute_validity_volume (0 invalid, 1 marginal, 2
+/// valid), generalized to a layered stack. Each voxel is scored by how many
+/// of *its own layer's* transport mean free paths it sits from the nearest
+/// thing that breaks diffusion's isotropy assumption: the nearest spot's
+/// real source point (always in layer 1, at depth z0), or the nearest
+/// physical interface bounding its own layer. Unlike FPW1992's single
+/// semi-infinite medium, that now includes every internal layer boundary and
+/// the stack's floor, not just the top surface — this model's doc comment:
+/// "bounded by air at *both* ends". The grid's side faces still aren't
+/// physical boundaries, just the artificial cylinder's invisible wall, so
+/// they don't count.
+///
+/// A voxel in a layer thinner than one of its own mean free paths comes out
+/// invalid here automatically: the nearest-boundary distance can be at most
+/// half that layer's thickness, already under the 1-mfp threshold — the same
+/// conclusion check_validity's separate thin-layer check reaches, with no
+/// special case needed for it.
+pub fn compute_validity_volume(p: &LiemertKienleParams) -> Vec<u8> {
+    let pattern = BeamPattern::from_params(&p.beam_pattern, p.pattern_count, p.pattern_spacing);
+    let stack = Stack::new(p, &pattern);
+    let spots = pattern.spots();
+
+    let xs = p.lx / 2.0;
+    let ys = p.ly / 2.0;
+    let dx = p.lx / p.nx as f64;
+    let dy = p.ly / p.ny as f64;
+    let dz = stack.lz / p.nz as f64;
+
+    let mut codes = vec![0u8; p.nx * p.ny * p.nz];
+    for ix in 0..p.nx {
+        let x = (ix as f64 + 0.5) * dx;
+        for iy in 0..p.ny {
+            let y = (iy as f64 + 0.5) * dy;
+
+            let rho2_min = spots
+                .iter()
+                .map(|&(sx, sy)| {
+                    let rx = x - (xs + sx);
+                    let ry = y - (ys + sy);
+                    rx * rx + ry * ry
+                })
+                .fold(f64::INFINITY, f64::min);
+
+            for iz in 0..p.nz {
+                let z = (iz as f64 + 0.5) * dz;
+                let layer = &stack.layers[stack.layer_at(z)];
+                let mfp = 1.0 / layer.musp;
+
+                let d_source = (rho2_min + (z - stack.z0) * (z - stack.z0)).sqrt();
+                let d_boundary = (z - layer.z_top).min(layer.z_top + layer.thickness - z);
+                let ratio = d_source.min(d_boundary) / mfp;
+
+                let code = if ratio < 1.0 {
+                    0
+                } else if ratio < 3.0 {
+                    1
+                } else {
+                    2
+                };
+                codes[ix + iy * p.nx + iz * p.nx * p.ny] = code;
+            }
+        }
+    }
+    codes
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1042,6 +1109,78 @@ mod tests {
             !result.reasons.iter().any(|r| r.contains("transport mean free path")),
             "ordinary layers shouldn't be flagged: {:?}", result.reasons
         );
+    }
+
+    /// Top-centre (near both the real source and the top surface) and just
+    /// either side of the layer1/layer2 interface should all read invalid;
+    /// deep in the middle of a thick bulk layer, and near the stack's floor
+    /// (a real boundary here, unlike FPW1992's semi-infinite medium), should
+    /// read valid and invalid respectively.
+    #[test]
+    fn validity_volume_flags_source_and_every_interface_not_just_the_top() {
+        let mut p = params(vec![
+            layer(0.1, 100.0, 0.9, 1.4, 0.5), // mfp' = 0.1 cm, contains z0 = 0.1 cm
+            layer(0.1, 50.0, 0.9, 1.4, 2.0),  // mfp' = 0.2 cm
+            layer(0.1, 50.0, 0.9, 1.4, 2.0),  // mfp' = 0.2 cm
+        ]);
+        p.lx = 4.0;
+        p.ly = 4.0;
+        p.nx = 80;
+        p.ny = 80;
+        p.nz = 90; // dz = 0.05 cm across Lz = 4.5 cm
+
+        let codes = compute_validity_volume(&p);
+        let (nx, ny) = (p.nx, p.ny);
+        let at = |ix: usize, iy: usize, iz: usize| codes[ix + iy * nx + iz * nx * ny];
+        let (cx, cy) = (40usize, 40usize); // under the beam
+
+        assert_eq!(at(cx, cy, 0), 0, "top surface, right at the source, should be invalid");
+        assert_eq!(at(cx, cy, 10), 0, "just below the layer1/layer2 interface should be invalid");
+        assert_eq!(at(cx, cy, 29), 2, "deep in layer 2's bulk should be valid");
+        assert_eq!(at(cx, cy, 89), 0, "right at the stack's floor should be invalid — a real boundary here");
+    }
+
+    /// A layer under one of its own mean free paths thick can't contain even
+    /// one scattering event anywhere inside it — so unlike the source/surface
+    /// case above, every voxel in it should read invalid, not just the ones
+    /// near its edges.
+    #[test]
+    fn validity_volume_flags_an_entire_thin_layer() {
+        // Same fixture as check_validity's own thin-layer test: mfp' = 0.1 cm
+        // in both the layer above and the thin layer itself, so 0.02 cm is a
+        // fifth of one.
+        let mut p = params(vec![
+            layer(0.1, 100.0, 0.9, 1.4, 0.3),
+            layer(0.1, 100.0, 0.9, 1.4, 0.02),
+            layer(0.1, 50.0, 0.9, 1.4, 1.7),
+        ]);
+        p.nx = 4;
+        p.ny = 4;
+        p.nz = 404; // dz = 0.005 cm, so a handful of voxels land inside the 0.02 cm layer
+
+        let stack = Stack::new(&p, &BeamPattern::single());
+        let dz = stack.lz / p.nz as f64;
+        let codes = compute_validity_volume(&p);
+        let (nx, ny) = (p.nx, p.ny);
+
+        let mut checked = 0;
+        for iz in 0..p.nz {
+            let z = (iz as f64 + 0.5) * dz;
+            if z < 0.3 || z >= 0.32 {
+                continue;
+            }
+            checked += 1;
+            for ix in 0..nx {
+                for iy in 0..ny {
+                    assert_eq!(
+                        codes[ix + iy * nx + iz * nx * ny],
+                        0,
+                        "voxel in the thin layer (iz={iz}, z={z}) should be invalid"
+                    );
+                }
+            }
+        }
+        assert!(checked > 0, "test fixture didn't actually sample the thin layer");
     }
 
     /// Non-physical inputs make the volume all-NaN, so they're reported on
