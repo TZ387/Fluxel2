@@ -25,7 +25,11 @@ none is otherwise specified.
   per-voxel compute loops are a genuine hot path at the grid sizes this app targets — the same reasoning
   applies to any future compute-heavy addition. `monte_carlo.rs` bends that shape slightly: its
   `compute_volume()` also returns the overlay buffer (recomputing it separately would mean a second
-  simulation) and takes a progress callback, wired to a `tauri::ipc::Channel` in lib.rs.
+  simulation) and takes a progress callback, wired to a `tauri::ipc::Channel` in lib.rs. It is also the one
+  model that runs multi-threaded (`std::thread::scope` over its photon batches, no dependency), which has one
+  consequence worth knowing before adding tests: its own tests pin the worker count, because the test harness
+  is already parallel and a run per test taking every core makes wall-clock assertions anywhere in the suite
+  measure spare capacity rather than code. Keep any timing bound generous for the same reason.
 - `src-tauri/capabilities/default.json` — permission allow-list for what the webview's JS may call natively;
   extend this when adding plugins (e.g. filesystem access for CSV/HDF5 export).
 

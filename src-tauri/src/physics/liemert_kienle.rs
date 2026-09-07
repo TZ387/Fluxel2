@@ -1261,7 +1261,14 @@ mod perf_and_sanity {
             assert!(p.is_finite() && p >= 0.0, "phi[{i}] = {p}");
             assert!(a.is_finite() && a >= 0.0, "abs[{i}] = {a}");
         }
-        assert!(dt.as_secs_f64() < 10.0, "too slow: {:?}", dt);
+        // Generous on purpose. This grid takes ~2.5 s on an idle machine, and
+        // the bound exists to catch an algorithmic blowup (a change that made
+        // the series cost scale with the voxel count, say), not to measure
+        // anything finer — the test harness runs tests concurrently, and the
+        // Monte Carlo model's tests now put real load on every core, so a
+        // tighter bound here measures how busy they are rather than this
+        // model's code. Under a full parallel suite this lands around 8 s.
+        assert!(dt.as_secs_f64() < 30.0, "too slow: {:?}", dt);
 
         // fluence should decay with depth on-axis
         let cx = 200usize;

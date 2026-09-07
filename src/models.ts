@@ -290,10 +290,11 @@ export const MODELS: Record<string, ModelDef> = {
           /* The one parameter with no counterpart in the other models: what
              to spend on the answer. Noise falls as 1/√photons, so each
              halving of the error bar costs four times the wait. The default
-             lands where the curve stops being worth it (about a second, and
-             90% of voxels inside 5%); the value box takes anything typed,
+             sits at the knee of that curve — a sub-second run with
+             essentially every voxel inside 5% (the measured sweep is in
+             monte_carlo.rs's perf test); the value box takes anything typed,
              including past the slider's own range. */
-          { id: "photons_k", label: "Photon budget ×10³", min: 1, max: 2000, step: 1, def: 50, fmt: fmt0 },
+          { id: "photons_k", label: "Photon budget ×10³", min: 1, max: 2000, step: 1, def: 100, fmt: fmt0 },
           { id: "lx", label: "L<sub>x</sub> [cm]", min: 0.5, max: 6, step: 0.001, def: 2, fmt: fmt3 },
           { id: "ly", label: "L<sub>y</sub> [cm]", min: 0.5, max: 6, step: 0.001, def: 2, fmt: fmt3 },
           { id: "nx", label: "N<sub>x</sub> voxels", min: 10, max: 400, step: 1, def: 40, fmt: fmt0 },

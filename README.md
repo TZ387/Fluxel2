@@ -38,8 +38,15 @@ math).
   instead of the kernel being convolved with it afterwards. That is what makes an in-house Monte Carlo
   affordable here — a full 3-D voxel simulation would need orders of magnitude more photons for the same
   noise. The price is that the answer is statistical: the photon budget is a parameter, error falls as
-  1/√photons, and the run reports its own per-voxel standard error as an overlay (batch means over 16 equal
-  batches). `src-tauri/src/physics/monte_carlo.rs`.
+  1/√photons, and the run reports its own per-voxel standard error as an overlay (batch means over 64 equal
+  batches).
+
+  Those batches are also the unit of parallel work, so a run spreads over every core the machine has
+  (`std::thread::scope`, no dependency). A batch seeds its own generator from its own index and fills its own
+  tally, so nothing writable is shared: no locks, no atomic accumulation, and the answer doesn't depend on how
+  many cores ran it — there is a test pinning that down. Measured 4.2x on a 4-core/8-thread laptop, where
+  all-core turbo is well below single-core turbo; a desktop should land closer to its thread count.
+  `src-tauri/src/physics/monte_carlo.rs`.
 - **Farrell, Patterson & Wilson (1992)** — pencil beam, semi-infinite slab. A narrow collimated beam entering a
   homogeneous tissue slab, modelled as a real + image point-source pair below the surface (accounting for the
   refractive-index mismatch at the air-tissue boundary). Has genuine 3-D structure: fluence falls off radially
@@ -74,13 +81,17 @@ is evaluated once and reused: a 25-spot grid costs under twice a single spot, no
 Adapted from [Fluxel's own roadmap](https://github.com/TZ387/Fluxel#roadmap) — a reasonable source of next
 tasks if none is otherwise specified:
 
-- **Parallel Monte Carlo** — the model is single-threaded today, and its batches are already the right unit
-  of work: independent, with a private tally each and one reduction at the end, so there is nothing to lock
-  and nothing to atomically add. Multi-core CPU (`rayon`, or `std::thread::scope` to stay dependency-free) is
-  the near-linear win and the obvious next step. A portable GPU path — `wgpu` + a WGSL compute shader, which
-  reaches Vulkan on Linux and DX12 on Windows and so runs on Intel and AMD integrated graphics, not just
-  NVIDIA — is the step after, and worth it only on a discrete card: photon transport is branch-divergent and
-  tally-atomic-heavy, the shape a small integrated GPU handles worst.
+- **Monte Carlo on the GPU** — `wgpu` + a WGSL compute shader, which reaches Vulkan on Linux and DX12 on
+  Windows and so runs on Intel and AMD integrated graphics rather than NVIDIA only, and needs no C++
+  toolchain or vendor SDK. The (r, z) tally is small enough to live in a workgroup's shared memory, so a
+  workgroup would keep a private tally exactly as a CPU worker does now and only reduce globally at the end —
+  the same decomposition, one level down. Two real costs: WGSL is f32-only, so the tally needs fixed-point
+  `atomicAdd` on u32 (what MCX does), and it is a genuine port of the inner loop. Worth it on a discrete
+  card; on integrated graphics sharing system memory with the CPU it would be a wash at best, since photon
+  transport is branch-divergent and tally-heavy — the shape a small iGPU handles worst.
+
+  A cheaper lever first, if runs ever feel slow: tracks average some 500 collisions per photon for typical
+  tissue, and a more aggressive roulette threshold trades a little variance for a lot of wall clock.
 - **Export** — download fluence/absorption volumes as CSV or HDF5
 - **Isosurface overlay** — 3D isosurface rendering on top of the slice views
 

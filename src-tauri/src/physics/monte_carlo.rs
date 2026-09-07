@@ -59,9 +59,7 @@
 //! "batch means" estimator). That gives a per-bin standard error alongside
 //! the fluence, which becomes the per-voxel overlay: green where the
 //! relative standard error is under REL_SE_GOOD, amber under REL_SE_POOR,
-//! red beyond it. Batching is also exactly the decomposition a parallel run
-//! wants — independent batches, private tallies, one reduction at the end —
-//! so it is doing double duty.
+//! red beyond it.
 //!
 //! Worth knowing what that overlay actually shows, because it is not what
 //! intuition suggests: the noisiest bins are the ones *on the beam axis*.
@@ -71,6 +69,23 @@
 //! goes with the collision count, not with the signal. The far outskirts
 //! are the other weak spot, for the opposite reason. Everything between
 //! them converges first.
+//!
+//! # Parallelism
+//!
+//! Those batches are also the unit of parallel work, which is the second job
+//! the same decomposition does. A batch seeds its own generator from its own
+//! index and fills its own tally, so batches share nothing writable: run_mc
+//! hands each worker a contiguous run of them, and the only synchronization
+//! in the whole model is one relaxed counter feeding the progress readout.
+//! No locks, no atomic accumulation, no false sharing — which is why this
+//! scales close to linearly with cores, and why the answer doesn't depend on
+//! how many there are (the split is fixed and the reduction ordered; see
+//! run_mc).
+//!
+//! The same property is what would make a GPU port tractable, if there is
+//! ever a card worth targeting: the (r, z) tally is small enough to sit in a
+//! workgroup's shared memory, so a workgroup could keep a private tally the
+//! way a worker does here and only reduce globally at the end.
 //!
 //! # Units and normalization
 //!
@@ -92,6 +107,9 @@ use crate::physics::validity::require;
 use serde::{Deserialize, Serialize};
 
 use std::f64::consts::PI;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread;
+use std::time::Duration;
 
 /// Refractive index of the medium bounding the stack above and below. Air at
 /// both ends, matching liemert_kienle.rs's convention so the two models
@@ -106,11 +124,34 @@ const N_OUTSIDE: f64 = 1.0;
 const W_MIN: f64 = 1e-4;
 const ROULETTE_CHANCE: f64 = 0.1;
 
-/// Batches the photon budget is split into for the batch-means standard
-/// error. Enough that the variance of the batch total is itself estimated
-/// with reasonable confidence (~25% relative), few enough that the per-batch
-/// tally is cleared rarely.
-const N_BATCHES: usize = 16;
+/// Batches the photon budget is split into. This is one number doing two
+/// jobs: it is the sample size of the batch-means error estimate, and it is
+/// the unit of parallel work (see run_mc).
+///
+/// 64 is generous for the first job — the variance of the batch total is
+/// itself pinned down to about 9% — and the second is what argues against
+/// leaving it at 16: batches are handed out in contiguous runs, so the
+/// slowest worker sets the wall time, and with only two batches each on an
+/// 8-thread machine an unlucky pair costs real time. 64 keeps that tail
+/// under a couple of percent for any core count up to 64, and divides
+/// evenly enough not to strand a worker on machines whose core count isn't
+/// a power of two.
+///
+/// Fixed rather than derived from the core count, deliberately: it decides
+/// which photons get traced, so tying it to the hardware would make the
+/// same parameters give different answers on different machines.
+const N_BATCHES: usize = 64;
+
+/// Workers every test in this file runs with — see compute_volume_with for
+/// why they don't just take the machine. Two rather than one so that each of
+/// them still crosses the parallel path.
+#[cfg(test)]
+const TEST_WORKERS: usize = 2;
+
+/// How often the run reports progress while the workers are going. Long
+/// enough that polling costs nothing, short enough that a status line
+/// doesn't look stuck.
+const PROGRESS_POLL: Duration = Duration::from_millis(40);
 
 /// Relative standard error boundaries for the noise overlay's three codes.
 const REL_SE_GOOD: f64 = 0.05;
@@ -693,6 +734,66 @@ fn trace_photon(
     }
 }
 
+/// One worker's share of a run, reduced into the same pair of moments the
+/// whole run wants so that combining shares is a plain elementwise add.
+struct Partial {
+    sum: Vec<f64>,
+    sum_sq: Vec<f64>,
+    stats: RunStats,
+}
+
+/// Trace the batches `range` names. Everything a worker touches is either
+/// read-only (the stack, the beam, the grid's geometry) or freshly allocated
+/// here, so there is nothing to lock, nothing to atomically add, and no
+/// false sharing between workers — the only shared write is the batch
+/// counter that feeds the progress readout, and nothing reads it for the
+/// answer.
+fn trace_batches(
+    range: std::ops::Range<usize>,
+    per_batch: u64,
+    seed: u64,
+    stack: &Stack,
+    beam: &BeamProfile,
+    grid: &TallyGrid,
+    specular: f64,
+    done: &AtomicUsize,
+) -> Partial {
+    let mut sum = vec![0.0f64; grid.len()];
+    let mut sum_sq = vec![0.0f64; grid.len()];
+    let mut batch = vec![0.0f64; grid.len()];
+    let mut stats = RunStats::default();
+
+    for b in range {
+        batch.iter_mut().for_each(|v| *v = 0.0);
+        // Each batch's generator is seeded from its own index, so which
+        // photons a batch traces doesn't depend on which worker picked it up
+        // or on what ran before it. That independence is the whole reason
+        // this parallelizes without changing the answer.
+        let mut rng = Rng::seeded(seed ^ b as u64);
+        for _ in 0..per_batch {
+            trace_photon(&mut rng, stack, beam, grid, &mut batch, specular, &mut stats);
+        }
+        // Fold the finished batch into this worker's running moments. Each
+        // batch is an independent estimate of the same quantity, so their
+        // spread is the variance of the total (see this module's doc
+        // comment).
+        for (k, &v) in batch.iter().enumerate() {
+            sum[k] += v;
+            sum_sq[k] += v * v;
+        }
+        done.fetch_add(1, Ordering::Relaxed);
+    }
+
+    Partial { sum, sum_sq, stats }
+}
+
+/// Workers a run uses unless told otherwise: one per hardware thread, capped
+/// at the number of batches there are to hand out. Split out so that a test
+/// can pin it and check the answer doesn't depend on it.
+fn default_workers() -> usize {
+    thread::available_parallelism().map_or(1, |n| n.get()).min(N_BATCHES)
+}
+
 /// Whole photon budget, rounded down to a whole number of equal batches (and
 /// at least one photon per batch, so the batch-means estimate always has
 /// N_BATCHES samples to work with).
@@ -702,43 +803,81 @@ fn photon_budget(p: &MonteCarloParams) -> (u64, u64) {
     (per_batch * N_BATCHES as u64, per_batch)
 }
 
-/// Trace the whole budget and reduce the batches into fluence + standard
-/// error. `progress` is called with the fraction done after each batch,
-/// giving the UI something to show during a run that can take seconds.
+/// Trace the whole budget in parallel and reduce the batches into fluence +
+/// standard error. `progress` is called on *this* thread as batches finish
+/// (so a caller need not be thread-safe), with however many intermediate
+/// reports the poll interval catches, and always with 1.0 at the end.
 fn run_mc(
     p: &MonteCarloParams,
     stack: &Stack,
     beam: &BeamProfile,
     pattern: &BeamPattern,
     seed: u64,
+    workers: usize,
     mut progress: impl FnMut(f64),
 ) -> McRun {
     let grid = radial_grid(p, pattern, stack.lz);
     let (photons, per_batch) = photon_budget(p);
     let (specular, _) = fresnel(N_OUTSIDE, stack.layers[0].n, 1.0);
 
+    // Each worker takes a contiguous run of batch indices. Contiguous and
+    // fixed rather than claimed on demand, because floating-point addition
+    // isn't associative: a fixed split plus a reduction in worker order is
+    // what keeps a run reproducible. (Across machines with different core
+    // counts the last bits can still differ — orders of magnitude below the
+    // statistical error the run reports for itself, and there is a test
+    // pinning that down.)
+    let workers = workers.clamp(1, N_BATCHES);
+    let done = AtomicUsize::new(0);
+    let mut partials: Vec<Partial> = Vec::with_capacity(workers);
+
+    thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|w| {
+                let range = (w * N_BATCHES / workers)..((w + 1) * N_BATCHES / workers);
+                let done = &done;
+                let grid = &grid;
+                scope.spawn(move || {
+                    trace_batches(range, per_batch, seed, stack, beam, grid, specular, done)
+                })
+            })
+            .collect();
+
+        // Progress is reported from this thread rather than called back from
+        // the workers: it drives a UI channel and stays single-threaded that
+        // way, and polling the handles (rather than waiting for the counter
+        // to reach N_BATCHES) still terminates if a worker panics.
+        let mut reported = 0usize;
+        while handles.iter().any(|h| !h.is_finished()) {
+            let n = done.load(Ordering::Relaxed);
+            if n > reported {
+                reported = n;
+                progress(n as f64 / N_BATCHES as f64);
+            }
+            thread::sleep(PROGRESS_POLL);
+        }
+
+        // Joined in worker order, which is what makes the fold below
+        // deterministic.
+        partials.extend(
+            handles
+                .into_iter()
+                .map(|h| h.join().expect("a Monte Carlo worker panicked")),
+        );
+    });
+    progress(1.0);
+
     let mut stats = RunStats::default();
-    // Running first and second moments of the per-batch tallies. Each batch
-    // is an independent estimate of the same quantity, so their spread is
-    // the variance of the total (see this module's doc comment).
     let mut sum = vec![0.0f64; grid.len()];
     let mut sum_sq = vec![0.0f64; grid.len()];
-    let mut batch = vec![0.0f64; grid.len()];
-
-    for b in 0..N_BATCHES {
-        batch.iter_mut().for_each(|v| *v = 0.0);
-        // Each batch gets its own generator, seeded from the batch index
-        // alone: reproducible, and independent of how many batches ran
-        // before it — which is what a parallel run needs.
-        let mut rng = Rng::seeded(seed ^ b as u64);
-        for _ in 0..per_batch {
-            trace_photon(&mut rng, stack, beam, &grid, &mut batch, specular, &mut stats);
+    for part in &partials {
+        for k in 0..sum.len() {
+            sum[k] += part.sum[k];
+            sum_sq[k] += part.sum_sq[k];
         }
-        for (k, &v) in batch.iter().enumerate() {
-            sum[k] += v;
-            sum_sq[k] += v * v;
-        }
-        progress((b + 1) as f64 / N_BATCHES as f64);
+        stats.absorbed += part.stats.absorbed;
+        stats.reflected += part.stats.reflected;
+        stats.transmitted += part.stats.transmitted;
     }
     stats.specular = specular * photons as f64;
 
@@ -899,10 +1038,24 @@ pub fn compute_volume(
     p: &MonteCarloParams,
     progress: impl FnMut(f64),
 ) -> (Vec<f32>, Vec<f32>, Vec<u8>) {
+    compute_volume_with(p, default_workers(), progress)
+}
+
+/// As compute_volume, with the worker count pinned. Exists so that the tests
+/// can keep their own footprint small: the test harness already runs tests
+/// concurrently, so a run per test taking every core would oversubscribe the
+/// machine several times over and make wall-clock assertions anywhere in the
+/// suite (this module's, and other models') measure spare capacity rather
+/// than code.
+fn compute_volume_with(
+    p: &MonteCarloParams,
+    workers: usize,
+    progress: impl FnMut(f64),
+) -> (Vec<f32>, Vec<f32>, Vec<u8>) {
     let beam_profile = BeamProfile::from_params(&p.beam_profile, p.beam_width);
     let pattern = BeamPattern::from_params(&p.beam_pattern, p.pattern_count, p.pattern_spacing);
     let stack = Stack::new(p);
-    let run = run_mc(p, &stack, &beam_profile, &pattern, SEED, progress);
+    let run = run_mc(p, &stack, &beam_profile, &pattern, SEED, workers, progress);
 
     let grid = Grid {
         lx: p.lx,
@@ -1014,7 +1167,11 @@ mod tests {
         let stack = Stack::new(p);
         let profile = BeamProfile::from_params(&p.beam_profile, p.beam_width);
         let pattern = BeamPattern::from_params(&p.beam_pattern, p.pattern_count, p.pattern_spacing);
-        run_mc(p, &stack, &profile, &pattern, SEED, |_| {})
+        run_mc(p, &stack, &profile, &pattern, SEED, TEST_WORKERS, |_| {})
+    }
+
+    fn volume(p: &MonteCarloParams) -> (Vec<f32>, Vec<f32>, Vec<u8>) {
+        compute_volume_with(p, TEST_WORKERS, |_| {})
     }
 
     /* ── the interface physics, which is exact and so testable exactly ── */
@@ -1128,6 +1285,35 @@ mod tests {
         }
     }
 
+    /// How the work is split must not change the answer. That is the whole
+    /// contract behind the parallelism, and the one part of it that could
+    /// break silently — a batch leaking state into its neighbour would show
+    /// up here and almost nowhere else. Seven workers rather than a divisor
+    /// of N_BATCHES, so the uneven chunking gets exercised too.
+    ///
+    /// Not bit-identical: the reduction groups the same terms differently,
+    /// and floating-point addition isn't associative. Identical to within a
+    /// few ulp, which is what "doesn't change the answer" can mean here.
+    #[test]
+    fn the_answer_does_not_depend_on_how_many_workers_run_it() {
+        let p = params(vec![layer(0.1, 100.0, 0.9, 1.4, 2.0)], 32.0);
+        let stack = Stack::new(&p);
+        let profile = BeamProfile::from_params(&p.beam_profile, p.beam_width);
+        let pattern = BeamPattern::from_params(&p.beam_pattern, p.pattern_count, p.pattern_spacing);
+
+        let one = run_mc(&p, &stack, &profile, &pattern, SEED, 1, |_| {});
+        let many = run_mc(&p, &stack, &profile, &pattern, SEED, 7, |_| {});
+
+        for (k, (&a, &b)) in one.phi.iter().zip(many.phi.iter()).enumerate() {
+            let tol = 1e-12 * a.abs().max(b.abs());
+            assert!((a - b).abs() <= tol, "bin {k}: {a} with 1 worker, {b} with 7");
+        }
+        for (k, (&a, &b)) in one.se.iter().zip(many.se.iter()).enumerate() {
+            let tol = 1e-9 * a.abs().max(b.abs());
+            assert!((a - b).abs() <= tol, "error at bin {k}: {a} with 1 worker, {b} with 7");
+        }
+    }
+
     /* ── against the models it exists to check ── */
 
     /// Far from the source in a high-albedo medium, transport and diffusion
@@ -1212,8 +1398,8 @@ mod tests {
         let stack = Stack::new(&p);
         let profile = BeamProfile::from_params(&p.beam_profile, p.beam_width);
         let pattern = BeamPattern::from_params(&p.beam_pattern, p.pattern_count, p.pattern_spacing);
-        let a = run_mc(&p, &stack, &profile, &pattern, 0x1111_2222_3333_4444, |_| {});
-        let b = run_mc(&p, &stack, &profile, &pattern, 0xAAAA_BBBB_CCCC_DDDD, |_| {});
+        let a = run_mc(&p, &stack, &profile, &pattern, 0x1111_2222_3333_4444, TEST_WORKERS, |_| {});
+        let b = run_mc(&p, &stack, &profile, &pattern, 0xAAAA_BBBB_CCCC_DDDD, TEST_WORKERS, |_| {});
 
         let mut n = 0usize;
         let mut sum_z2 = 0.0;
@@ -1242,8 +1428,8 @@ mod tests {
 
     #[test]
     fn volume_is_finite_positive_and_mostly_well_sampled() {
-        let p = params(vec![layer(0.1, 100.0, 0.9, 1.4, 2.0)], 200.0);
-        let (phi, abs, codes) = compute_volume(&p, |_| {});
+        let p = params(vec![layer(0.1, 100.0, 0.9, 1.4, 2.0)], 100.0);
+        let (phi, abs, codes) = volume(&p);
         let n = p.nx * p.ny * p.nz;
         assert_eq!((phi.len(), abs.len(), codes.len()), (n, n, n));
         assert!(phi.iter().all(|v| v.is_finite() && *v >= 0.0), "phi has a bad value");
@@ -1267,10 +1453,10 @@ mod tests {
     #[test]
     fn a_wide_beam_lowers_the_peak() {
         let peak = |profile: &str, width: f64| {
-            let mut p = params(vec![layer(0.1, 100.0, 0.9, 1.4, 2.0)], 100.0);
+            let mut p = params(vec![layer(0.1, 100.0, 0.9, 1.4, 2.0)], 60.0);
             p.beam_profile = profile.into();
             p.beam_width = width;
-            let (phi, _, _) = compute_volume(&p, |_| {});
+            let (phi, _, _) = volume(&p);
             phi.iter().fold(0.0f32, |m, &v| m.max(v))
         };
         let pencil = peak("pencil", 0.0);
@@ -1288,7 +1474,7 @@ mod tests {
         p.beam_pattern = "grid".into();
         p.pattern_count = 3;
         p.pattern_spacing = 0.3;
-        let (phi, _, _) = compute_volume(&p, |_| {});
+        let (phi, _, _) = volume(&p);
 
         let at = |ix: usize, iy: usize, iz: usize| phi[ix + iy * p.nx + iz * p.nx * p.ny];
         for iz in [0, 5, 20] {
@@ -1308,8 +1494,12 @@ mod tests {
     fn progress_runs_from_zero_to_one() {
         let p = params(vec![layer(0.1, 100.0, 0.9, 1.4, 2.0)], 16.0);
         let mut seen: Vec<f64> = Vec::new();
-        compute_volume(&p, |f| seen.push(f));
-        assert_eq!(seen.len(), N_BATCHES);
+        compute_volume_with(&p, TEST_WORKERS, |f| seen.push(f));
+        // How many intermediate reports land is a matter of timing — a run
+        // this small may finish inside a single poll interval — so what is
+        // guaranteed is only that they rise, stay in range, and end at 1.
+        assert!(!seen.is_empty(), "no progress was reported at all");
+        assert!(seen.iter().all(|f| *f > 0.0 && *f <= 1.0), "out of range: {seen:?}");
         assert!(seen.windows(2).all(|w| w[1] > w[0]), "progress went backwards: {seen:?}");
         assert_eq!(seen.last().copied(), Some(1.0));
     }
@@ -1360,7 +1550,7 @@ mod tests {
             "a thin layer should not be an objection here: {:?}",
             v.reasons
         );
-        let (phi, _, _) = compute_volume(&p, |_| {});
+        let (phi, _, _) = volume(&p);
         assert!(phi.iter().all(|v| v.is_finite() && *v >= 0.0));
         assert!(phi.iter().any(|v| *v > 0.0), "no light got in at all");
     }
@@ -1371,6 +1561,15 @@ mod tests {
 /// one parameter here whose right value is purely a time/noise trade, so it
 /// is worth pinning down what a run actually costs — and worth noticing if a
 /// change to the inner loop makes it cost noticeably more.
+///
+/// These run at TEST_WORKERS like every other test here, and with bounds
+/// loose enough to survive a contended machine, because that is all an
+/// in-suite wall-clock assertion can honestly check: the harness runs tests
+/// concurrently, so anything tighter measures how busy the other tests are.
+/// What they do catch is an algorithmic blowup. The numbers quoted in the
+/// doc comments below come from dedicated runs on an otherwise idle machine
+/// (`cargo test --release <name> -- --nocapture --test-threads=1`), which is
+/// the only way to measure this meaningfully.
 #[cfg(test)]
 mod perf_and_sanity {
     use super::*;
@@ -1400,36 +1599,51 @@ mod perf_and_sanity {
     /// grid — the run the user gets for clicking Compute without touching
     /// anything, which is the one that has to feel responsive.
     ///
-    /// That default (50k photons, models.ts) was picked off this curve, for
-    /// the two-layer tissue below on a 40^3 grid:
+    /// That default (100k photons, models.ts) was picked off this curve, for
+    /// the two-layer tissue below on a 40^3 grid, on a 4-core/8-thread
+    /// i5-10310U:
     ///
-    ///     10k: 0.25 s, 28% of voxels under 5% error
-    ///     25k: 0.59 s, 69%
-    ///     50k: 1.13 s, 92%
-    ///    100k: 2.36 s, 98%
-    ///    200k: 4.56 s, 99.6%
+    ///     10k: 0.09 s, 23% of voxels under 5% error
+    ///     25k: 0.21 s, 71%
+    ///     50k: 0.37 s, 91%
+    ///    100k: 0.69 s, 99%
+    ///    200k: 1.29 s, 99.6%
+    ///    400k: 2.45 s, 99.9%
     ///
-    /// — about 22 us per photon, which for this tissue is some 500
-    /// collisions each. Diminishing returns set in right where the wait
-    /// starts to be noticeable, which is a convenient place for a default to
-    /// sit; the slider goes four decades either way for anyone who wants a
-    /// draft or a reference run.
+    /// The knee is around 100k: essentially everything converged, still
+    /// under a second. The slider spans four decades either side for anyone
+    /// who wants a rough draft or a reference run.
+    ///
+    /// Per photon that is about 6 us, for some 500 collisions each. The
+    /// same sweep against worker count, at 200k photons:
+    ///
+    ///     1 worker  26.3 us/photon   1.00x
+    ///     2         13.8             1.90x
+    ///     4          8.6             3.05x
+    ///     8          6.2             4.21x
+    ///
+    /// 4.2x from 4 cores is about the ceiling on a 15 W laptop part: the
+    /// work parallelizes essentially perfectly (nothing is shared, see
+    /// run_mc), but all-core turbo is far below single-core turbo, so the
+    /// last of it is paid back in clock. A desktop or workstation should
+    /// land much closer to its thread count.
     #[test]
     fn default_run_stays_interactive() {
-        let p = defaults(50.0);
+        let p = defaults(100.0);
         let t0 = std::time::Instant::now();
-        let (phi, _, codes) = compute_volume(&p, |_| {});
+        let (phi, _, codes) = compute_volume_with(&p, TEST_WORKERS, |_| {});
         let dt = t0.elapsed();
         let photons = photon_budget(&p).0;
         println!(
-            "{} photons, 40^3 grid: {:?} ({:.1} us/photon); {:.0}% of voxels well sampled",
+            "{} photons, 40^3 grid, {} workers: {:?} ({:.1} us/photon); {:.0}% of voxels well sampled",
             photons,
+            TEST_WORKERS,
             dt,
             dt.as_secs_f64() * 1e6 / photons as f64,
             100.0 * codes.iter().filter(|c| **c == 2).count() as f64 / codes.len() as f64,
         );
         assert!(phi.iter().any(|v| *v > 0.0));
-        assert!(dt.as_secs_f64() < 10.0, "default run too slow: {:?}", dt);
+        assert!(dt.as_secs_f64() < 30.0, "default run too slow: {:?}", dt);
     }
 
     /// A beam pattern costs one simulation however many spots it has — the
@@ -1437,16 +1651,16 @@ mod perf_and_sanity {
     /// superposition grows, and that is cheap next to tracing photons.
     #[test]
     fn many_spots_cost_almost_nothing_extra() {
-        let single = defaults(100.0);
+        let single = defaults(60.0);
         let t0 = std::time::Instant::now();
-        compute_volume(&single, |_| {});
+        compute_volume_with(&single, TEST_WORKERS, |_| {});
         let dt_single = t0.elapsed();
 
-        let mut grid = defaults(100.0);
+        let mut grid = defaults(60.0);
         grid.beam_pattern = "grid".into();
         grid.pattern_count = 5; // 25 spots
         let t0 = std::time::Instant::now();
-        compute_volume(&grid, |_| {});
+        compute_volume_with(&grid, TEST_WORKERS, |_| {});
         let dt_grid = t0.elapsed();
 
         println!("1 spot: {:?} | 25 spots: {:?}", dt_single, dt_grid);

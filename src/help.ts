@@ -100,7 +100,9 @@ const MODEL_HELP: ModelHelp[] = [
         "weak spot, for the opposite reason — hardly any photon gets that far.",
       "Cost scales with the photon budget and with how long each track runs, which is set by the tissue: " +
         "weakly absorbing, strongly scattering layers between two index steps trap light and make for long " +
-        "tracks. Roughly a second for the default budget on the default grid.",
+        "tracks. The run spreads itself over every core the machine has, and takes well under a second for " +
+        "the default budget on the default grid. Splitting the work differently doesn't change the answer, " +
+        "so the number of cores affects only how long you wait.",
       "The geometry has to stay symmetric about the beam axis: flat parallel layers, normal incidence, a " +
         "radially symmetric beam. Tilted incidence, a warped interface, or an inclusion inside a layer would " +
         "all need a full 3-D grid instead, and are not supported.",
