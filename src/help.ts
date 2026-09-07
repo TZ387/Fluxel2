@@ -282,12 +282,23 @@ export function buildHelp(containerId: string): void {
           has something to say about the parameters you chose — the diffusion approximation being weakly
           justified, or, for Monte Carlo, too few photons for the grid you asked for (see each model's Limits
           below). The result is still shown, but treat it with appropriate skepticism.</li>
-        <li>Drag the x / y / z sliders beneath each plot to move the three slice planes through the volume.</li>
+        <li>Drag the x / y / z sliders beneath each plot to move the three slice planes through the volume.
+          They step one voxel at a time and read out in cm, measured the way the plots are labelled: x and y
+          from the beam axis, z downward from the tissue surface.</li>
+        <li>Both plots open as a <strong>3-D slice box</strong> — the same three cuts placed where they
+          actually are inside the volume, at true proportions, with the layer interfaces marked on the back
+          walls. Drag either plot to orbit it (both follow, so fluence and absorption stay comparable), and
+          double-click to return to the default angle. The <strong>Flat slices</strong> layout puts the three
+          cuts side by side instead: nothing is foreshortened there, so a distance on screen is a distance in
+          the tissue — the view to use when reading a depth off the plot.</li>
         <li>Tick the overlay checkbox under a plot to recolour those slices by how much to trust them
           voxel-by-voxel: for the diffusion models, how far each voxel is from breaking the approximation;
           for Monte Carlo, how converged its estimate is there. Kubelka-Munk has no such overlay.</li>
-        <li>The colour scale is logarithmic, to show the full dynamic range from near the source to far from
-          it — read the colourbar's numeric labels, not just its colour, when comparing two runs.</li>
+        <li>The colour scale defaults to logarithmic, which shows the full dynamic range from near the source
+          to far from it. Switch it to linear when the question is about a threshold — how far the region
+          above some fluence reaches — since a log ramp gives the top decade, where all of that happens, only
+          a sliver of the colour range. Either way, read the colourbar's numbers, not just its colour, when
+          comparing two runs.</li>
       </ol>
     </div>
     ${MODEL_HELP.map(modelSection).join("")}
