@@ -118,9 +118,37 @@ fn monte_carlo_volume(params: MonteCarloParams, progress: Channel<f64>) -> Respo
     volume_bytes(phi, abs, Some(noise))
 }
 
+/* ================================================================
+   SETTINGS FILES
+   ================================================================
+   Whole-text read and write, for the parameter files the frontend
+   saves and loads (src/settings.ts owns their shape). The path always
+   comes from the native dialog the user has just picked with, so this
+   pair deliberately does no scoping of its own — which is the reason
+   it exists instead of tauri-plugin-fs, whose scope configuration is
+   most of what that plugin would add here. The webview runs nothing
+   but this app's own bundled code, so these are exactly as privileged
+   as the app already is, and no more.
+
+   The error is stringly typed because that is what crosses the IPC
+   boundary as a rejected promise; the frontend shows it verbatim, so
+   it carries the path as well as the reason.
+   ================================================================ */
+
+#[tauri::command(async)]
+fn read_text_file(path: String) -> Result<String, String> {
+    std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))
+}
+
+#[tauri::command(async)]
+fn write_text_file(path: String, contents: String) -> Result<(), String> {
+    std::fs::write(&path, contents).map_err(|e| format!("{path}: {e}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             fpw1992_summary,
             fpw1992_volume,
@@ -130,6 +158,8 @@ pub fn run() {
             liemert_kienle_volume,
             monte_carlo_summary,
             monte_carlo_volume,
+            read_text_file,
+            write_text_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

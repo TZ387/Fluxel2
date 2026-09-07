@@ -34,7 +34,14 @@
         <div id="param-panels"></div>
 
         <div class="panel">
-          <button id="run-btn">&#9654; Compute &amp; visualise</button>
+          <div class="run-row">
+            <button id="run-btn">&#9654; Compute &amp; visualise</button>
+            <!-- The parameters above, layer names included, plus the shared
+                 view controls — as a JSON file. See src/settings.ts for the
+                 shape and what it does and doesn't remember. -->
+            <button type="button" class="io-btn" id="save-btn">Save settings&hellip;</button>
+            <button type="button" class="io-btn" id="load-btn">Load settings&hellip;</button>
+          </div>
           <div id="status">Adjust parameters and click Compute.</div>
         </div>
 

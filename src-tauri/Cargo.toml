@@ -20,6 +20,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
+tauri-plugin-dialog = "2.7.3"
 
 # `tauri dev` always builds the `dev` profile, which by default has all
 # optimizations off — fine for typical Tauri apps, but the physics loops in

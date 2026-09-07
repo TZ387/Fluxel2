@@ -19,6 +19,9 @@ import {
 import { DEFAULT_CAMERA, EL_LIMIT, drawBox3D, pick3D, type Camera } from "./render3d";
 import { runModel } from "./compute";
 import { buildHelp } from "./help";
+import { parseSettings, serializeSettings, type ViewMode, type ViewSettings } from "./settings";
+import { invoke } from "@tauri-apps/api/core";
+import { open, save } from "@tauri-apps/plugin-dialog";
 
 /* ================================================================
    SIMULATION STATE
@@ -204,8 +207,6 @@ function getShowValidity(suffix: VolumeKind): boolean {
    reads the sliders, so there is no second copy of the state to keep
    in step.
    ================================================================ */
-type ViewMode = "box3d" | "flat";
-
 const camera: Camera = { ...DEFAULT_CAMERA };
 
 /** One plane-image cache per panel, so the two plots don't evict each
@@ -306,6 +307,41 @@ const canvasResizeObserver = new ResizeObserver(() => {
   redrawAll();
 });
 ["cv-phi", "cv-abs"].forEach((id) => canvasResizeObserver.observe(document.getElementById(id)!));
+
+/* ================================================================
+   STATUS LINE
+   ================================================================
+   Shared by the run and by the two settings-file actions, so the
+   three don't each grow their own idea of what a message looks like.
+   ================================================================ */
+
+/** Replace the status line with `text`, plus a block of advisory notes —
+    what a loaded file had substituted or clamped, say. */
+function showStatus(text: string, notes: string[] = []): void {
+  const st = document.getElementById("status")!;
+  st.textContent = text;
+  if (notes.length === 0) return;
+  const box = document.createElement("div");
+  box.className = "status-warn";
+  notes.forEach((note) => {
+    const para = document.createElement("p");
+    /* textContent, not innerHTML: unlike a model's own validity reasons,
+       these quote values out of a file this app didn't write. */
+    para.textContent = note;
+    box.appendChild(para);
+  });
+  st.appendChild(box);
+}
+
+/** A failed action, as opposed to a completed one with something to say. */
+function showStatusError(text: string): void {
+  const st = document.getElementById("status")!;
+  st.textContent = "";
+  const box = document.createElement("div");
+  box.className = "status-error";
+  box.textContent = text;
+  st.appendChild(box);
+}
 
 /* ================================================================
    MAIN RUN HANDLER
@@ -419,15 +455,11 @@ document.getElementById("run-btn")!.addEventListener("click", async () => {
     await runAndRender();
   } catch (err) {
     console.error(err);
-    st.textContent = "";
-    const box = document.createElement("div");
-    box.className = "status-error";
-    /* textContent, not innerHTML: unlike the validity reasons above, this
-       string is whatever the backend threw, so it isn't trusted markup. */
-    box.textContent = `✖ Compute failed — ${err instanceof Error ? err.message : String(err)}`;
-    st.appendChild(box);
-    /* Any plots on screen are from the previous successful run, so they're
-       left alone rather than cleared — the message says this one failed. */
+    /* Whatever the backend threw is not trusted markup, which is why
+       showStatusError sets it as text. Any plots on screen are from the
+       previous successful run, so they're left alone rather than cleared —
+       the message says this one failed. */
+    showStatusError(`✖ Compute failed — ${err instanceof Error ? err.message : String(err)}`);
   } finally {
     btn.disabled = false;
   }
@@ -441,12 +473,117 @@ document.getElementById("run-btn")!.addEventListener("click", async () => {
    just resetting values. Plots from the previous model are hidden
    since they'd no longer match the current inputs.
    ================================================================ */
-function onModelChange(): void {
-  const model = selectedModel();
-  buildModelParams(model, "param-panels");
+
+/** Rebuild the parameter panel for whichever model is selected, optionally
+    seeded with a loaded file's values (see settings.ts), and put the plots
+    away — they were computed from the parameters that have just been
+    replaced, so leaving them up would invite reading them as this model's. */
+function rebuildPanel(seed?: Record<string, any>): void {
+  buildModelParams(selectedModel(), "param-panels", seed);
   (document.getElementById("plots") as HTMLElement).style.display = "none";
-  document.getElementById("status")!.textContent = "Adjust parameters and click Compute.";
 }
+
+function onModelChange(): void {
+  rebuildPanel();
+  showStatus("Adjust parameters and click Compute.");
+}
+
+/* ================================================================
+   SETTINGS FILES
+   ================================================================
+   Save the parameter panel to a JSON file and load it back.
+   settings.ts owns the file's shape and the checking of one that
+   comes back; src-tauri/src/lib.rs owns the two commands that touch
+   the disk; the dialogs are the plugin's. So all that's here is the
+   wiring — and, notably, a load path that goes through the very same
+   buildModelParams the model dropdown uses, so a file can only put
+   the panel into a state it could have been put into by hand.
+
+   What a file remembers is the parameters, the layer names, and the
+   shared view controls. What it doesn't is anything that belongs to
+   a *result*: the slice-plane positions are indices into whatever
+   grid the run happened to use, and the volumes themselves are the
+   Export item's business, not this one's.
+   ================================================================ */
+const SETTINGS_FILTERS = [{ name: "Fluxel settings", extensions: ["json"] }];
+
+function getViewSettings(): ViewSettings {
+  return {
+    mode: getViewMode(),
+    scale: getScaleKind(),
+    cmap: getColormapId(),
+    /* Copied, not referenced: an orbit mutates the live camera in place. */
+    camera: { ...camera },
+  };
+}
+
+function applyViewSettings(view: ViewSettings): void {
+  (document.getElementById("view-mode") as HTMLSelectElement).value = view.mode;
+  (document.getElementById("view-scale") as HTMLSelectElement).value = view.scale;
+  (document.getElementById("view-cmap") as HTMLSelectElement).value = view.cmap;
+  Object.assign(camera, view.camera);
+  /* Setting a select's value fires no change event, so the hint that the
+     'change' handler would have updated is updated here. */
+  document.getElementById("view-hint")!.hidden = view.mode !== "box3d";
+}
+
+async function saveSettings(): Promise<void> {
+  const model = (document.getElementById("model-select") as HTMLSelectElement).value;
+  const path = await save({
+    title: "Save settings",
+    defaultPath: `${model}-settings.json`,
+    filters: SETTINGS_FILTERS,
+  });
+  if (path === null) return; // dialog cancelled
+  const contents = serializeSettings(model, getParams(), getViewSettings());
+  await invoke("write_text_file", { path, contents });
+  showStatus(`Saved to ${path}`);
+}
+
+async function loadSettings(): Promise<void> {
+  const path = await open({
+    title: "Load settings",
+    multiple: false,
+    directory: false,
+    filters: SETTINGS_FILTERS,
+  });
+  if (typeof path !== "string") return; // dialog cancelled
+  const loaded = parseSettings(await invoke<string>("read_text_file", { path }));
+
+  (document.getElementById("model-select") as HTMLSelectElement).value = loaded.model;
+  rebuildPanel(loaded.params);
+  if (loaded.view) applyViewSettings(loaded.view);
+
+  /* The warnings say what the file couldn't be taken at its word about — a
+     parameter this build doesn't have, a layer count the model won't allow.
+     The panel holds a usable set of values either way, which is why this is
+     a note under a loaded file rather than a failure. */
+  const name = path.split(/[/\\]/).pop() || path;
+  showStatus(`Loaded ${name} — click Compute & visualise.`, loaded.warnings);
+}
+
+/** Both file buttons behave the same way: a dialog that may be cancelled
+    (in which case nothing happens at all), followed by work that can fail on
+    something outside the app's control — an unreadable file, or one that
+    isn't a settings file. That belongs in the status line, not the console,
+    and the button has to come back either way. */
+function bindFileButton(id: string, action: () => Promise<void>, failure: string): void {
+  const btn = document.getElementById(id) as HTMLButtonElement;
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    try {
+      await action();
+    } catch (err) {
+      console.error(err);
+      showStatusError(`✖ ${failure} — ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
+bindFileButton("save-btn", saveSettings, "Could not save the settings");
+bindFileButton("load-btn", loadSettings, "Could not load the settings");
 
 /* ================================================================
    TABS

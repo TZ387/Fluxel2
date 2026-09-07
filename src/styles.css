@@ -351,8 +351,32 @@ input[type=range]:focus-visible { box-shadow: 0 0 0 3px rgba(88,166,255,0.3); }
 }
 
 /* ── run button ──────────────────────────────────────────────── */
-#run-btn {
+/* Compute and the two settings-file buttons share a line, the filled button
+   against outlined ones so the run button stays the obvious one. */
+.run-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
   margin-top: 14px;
+}
+
+.io-btn {
+  padding: 7px 14px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text2);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: border-color .12s ease, color .12s ease;
+}
+
+.io-btn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+.io-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+#run-btn {
   padding: 8px 20px;
   background: var(--accent2);
   color: #0d1117;

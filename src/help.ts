@@ -282,7 +282,7 @@ export function buildHelp(containerId: string): void {
           layer</strong> and <strong>Remove</strong> change the count, and the rest of the stack keeps its
           values when you do. Click a layer's name to rename it: "Layer 1" until you say otherwise, and
           better as "Epidermis" or "Subcutis" once a stack has more than two. Names are labels only, never
-          seen by the physics, and they follow their layer rather than its position.</li>
+          seen by the physics, but they are saved with the settings and they follow their layer.</li>
         <li>Click <strong>Compute &amp; visualise</strong>. A warning appears below the result if the model
           has something to say about the parameters you chose — the diffusion approximation being weakly
           justified, or, for Monte Carlo, too few photons for the grid you asked for (see each model's Limits
@@ -309,6 +309,14 @@ export function buildHelp(containerId: string): void {
           above some fluence reaches — since a log ramp gives the top decade, where all of that happens, only
           a sliver of the colour range. Either way, read the colourbar's numbers, not just its colour, when
           comparing two runs.</li>
+        <li><strong>Save settings&hellip;</strong> writes the whole parameter panel — layer names included —
+          together with the view controls the two plots share, as a JSON file;
+          <strong>Load settings&hellip;</strong> reads one back, switching the model first if the file
+          belongs to a different one. The plots are put away on load, since they were computed from the
+          parameters that have just been replaced — click Compute to bring them back. The file is meant to be
+          readable and editable by hand, so loading is deliberately forgiving: anything in it that can't be
+          used as written falls back to the model's default, and every such substitution is listed under the
+          status line rather than left to be noticed.</li>
       </ol>
     </div>
     ${MODEL_HELP.map(modelSection).join("")}

@@ -93,6 +93,37 @@ works — comes from splitting each plane into quadrants at the other two and dr
 order the three planes' BSP defines. `src/render3d.ts`'s header comment has the reasoning, including why the
 obvious centroid-depth shortcut is wrong.
 
+## Settings files
+
+A run's inputs can be saved to a JSON file and loaded back — the parameters, the name given to each layer,
+and the view controls the two plots share (layout, colour scale, colormap, camera angle). The format is
+deliberately not a new one: the `params` block is verbatim the object the frontend hands to Rust, so a saved
+file is literally what was computed, there is nothing to keep in step with the four models' parameter
+schemas, and the file is readable, diffable and editable by hand.
+
+```json
+{
+  "app": "fluxel2-settings",
+  "format": 1,
+  "model": "monteCarlo",
+  "params": {
+    "layers": [{ "name": "Epidermis", "mua": 0.1, "mus": 100, "g": 0.9, "n": 1.4, "thickness": 0.3 }],
+    "p0": 1, "beam_profile": "pencil", "nx": 40
+  },
+  "view": { "mode": "box3d", "scale": "log", "cmap": "inferno", "camera": { "az": -1.047, "el": 0.524 } }
+}
+```
+
+Loading is forgiving on purpose, since a file may have been edited by hand or written by a different build:
+a parameter that is missing or unusable falls back to the model's default, a layer count outside what the
+model allows is clamped, unknown keys are ignored, and a stale `view` block costs only itself. Each such
+substitution is reported under the status line, so a file never loads differently from how it reads without
+saying so. A value *outside* its slider's range is the one thing kept as written — the panel widens the
+slider to fit it, exactly as typing that value in does. What a file does not record is anything belonging to
+a result rather than to its inputs: the slice-plane positions are indices into whatever grid the run used,
+and the volumes themselves are the Export item below. `src/settings.ts` owns the format and the checking, and
+is pure — `tests/settings.test.ts` covers it without a DOM.
+
 ## Roadmap
 
 Adapted from [Fluxel's own roadmap](https://github.com/TZ387/Fluxel#roadmap) — a reasonable source of next
@@ -109,7 +140,10 @@ tasks if none is otherwise specified:
 
   A cheaper lever first, if runs ever feel slow: tracks average some 500 collisions per photon for typical
   tissue, and a more aggressive roulette threshold trades a little variance for a lot of wall clock.
-- **Export** — download fluence/absorption volumes as CSV or HDF5
+- **Export** — write fluence/absorption volumes out as CSV or HDF5. The file plumbing this needs is already
+  in place for the settings files above (a native save dialog plus a write command in `lib.rs`); what is left
+  is the encoding, and a decision about grid sizes — a 400³ volume is 64M values, which is a 700 MB CSV and
+  the point at which HDF5 stops being the nicer option and starts being the only one.
 - **Isosurface overlay** — a true isosurface in the 3-D box: the closed shell where the field equals one
   chosen level, most usefully an absorbed-power density corresponding to a damage threshold, which answers
   "how deep and how wide is the region above it" in one shape. Marching cubes belongs in Rust next to the
