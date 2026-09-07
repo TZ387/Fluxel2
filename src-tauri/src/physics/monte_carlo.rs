@@ -165,6 +165,12 @@ const REL_SE_POOR: f64 = 0.20;
 /// absurdly, or from being zero. Hitting this coarsens the radial grid,
 /// which only affects the far field; check_validity complains about a reach
 /// like that long before it gets here.
+///
+/// Worth a thought when changing it: every worker allocates three tallies of
+/// its own (see trace_batches), so the ceiling is paid per core — 2M bins is
+/// 48 MB a worker, which is the same order as the voxel volumes this app
+/// already builds at its largest grids, and only reachable by a
+/// configuration it already warns about.
 const MAX_TALLY_BINS: usize = 2_000_000;
 
 /// Cosine above which a direction counts as exactly along z, where the
@@ -490,7 +496,11 @@ impl TallyGrid {
             return (0, 0, 0.0);
         }
         let hi = self.r_c.partition_point(|&v| v < rho);
-        if hi >= self.n_r {
+        // hi == 0 can't happen for a finite rho past r_c[0] — the predicate
+        // holds at index 0 by definition — but it does for a NaN, where
+        // every comparison is false. Caught here rather than left to
+        // underflow `hi - 1` below into a panic.
+        if hi == 0 || hi >= self.n_r {
             return (self.n_r - 1, self.n_r - 1, 0.0);
         }
         let f = (rho - self.r_c[hi - 1]) / (self.r_c[hi] - self.r_c[hi - 1]);
@@ -830,6 +840,10 @@ fn run_mc(
     let workers = workers.clamp(1, N_BATCHES);
     let done = AtomicUsize::new(0);
     let mut partials: Vec<Partial> = Vec::with_capacity(workers);
+    // Outside the scope because the last report has to be reconciled after
+    // it: a worker bumps the counter before it finishes, so the loop below
+    // can legitimately observe every batch done and report 1.0 itself.
+    let mut reported = 0usize;
 
     thread::scope(|scope| {
         let handles: Vec<_> = (0..workers)
@@ -847,7 +861,6 @@ fn run_mc(
         // the workers: it drives a UI channel and stays single-threaded that
         // way, and polling the handles (rather than waiting for the counter
         // to reach N_BATCHES) still terminates if a worker panics.
-        let mut reported = 0usize;
         while handles.iter().any(|h| !h.is_finished()) {
             let n = done.load(Ordering::Relaxed);
             if n > reported {
@@ -865,7 +878,9 @@ fn run_mc(
                 .map(|h| h.join().expect("a Monte Carlo worker panicked")),
         );
     });
-    progress(1.0);
+    if reported < N_BATCHES {
+        progress(1.0);
+    }
 
     let mut stats = RunStats::default();
     let mut sum = vec![0.0f64; grid.len()];
@@ -1138,6 +1153,7 @@ fn noise_codes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::physics::fpw1992;
 
     fn layer(mua: f64, mus: f64, g: f64, n: f64, thickness: f64) -> McLayerParams {
         McLayerParams { mua, mus, g, n, thickness }
@@ -1314,7 +1330,152 @@ mod tests {
         }
     }
 
+    /* ── against an exactly known answer ── */
+
+    /// The one test here that checks an *absolute* level against a closed
+    /// form, rather than a ratio, a slope, or the model against itself. Take
+    /// scattering away and the answer is Beer-Lambert, which is exact:
+    ///
+    ///   int_V Phi dV = int exp(-mu_t z) dz over the bin's depth
+    ///
+    /// so the fluence in radial bin 0 (where an unscattered pencil beam
+    /// stays) is [exp(-mu_t z_lo) - exp(-mu_t z_hi)] / (mu_t * V). With
+    /// n = 1 there is no specular loss and no Fresnel either, so what is
+    /// left is precisely the estimator, its normalization, and its units —
+    /// the parts that every other test here would happily agree with
+    /// themselves about while being wrong by a constant factor.
+    ///
+    /// Checked against the run's own reported error bars, so this pins down
+    /// the noise estimate against a known answer at the same time. The seed
+    /// is fixed, so there is nothing flaky about the margin.
+    #[test]
+    fn a_non_scattering_slab_reproduces_beer_lambert() {
+        let mua = 1.0;
+        let mus = 1e-9; // not zero: mu_t == 0 would be a medium, not a slab
+        let mut p = params(vec![layer(mua, mus, 0.0, 1.0, 2.0)], 200.0);
+        p.nz = 40;
+        let r = run(&p);
+
+        let mu_t = mua + mus;
+        let bin_volume = PI * r.grid.dr * r.grid.dr * r.grid.dz;
+        let mut worst = 0.0f64;
+        for iz in 0..r.grid.n_z {
+            let z_lo = iz as f64 * r.grid.dz;
+            let z_hi = z_lo + r.grid.dz;
+            let exact = ((-mu_t * z_lo).exp() - (-mu_t * z_hi).exp()) / (mu_t * bin_volume);
+
+            let got = r.phi[iz]; // radial bin 0
+            let se = r.se[iz];
+            assert!(se > 0.0, "no error reported for depth bin {iz}");
+            let sigmas = (got - exact).abs() / se;
+            worst = worst.max(sigmas);
+            assert!(
+                sigmas < 5.0,
+                "depth bin {iz}: {got:.6e} vs Beer-Lambert's {exact:.6e}, \
+                 off by {sigmas:.1} of the reported {se:.2e}"
+            );
+        }
+        assert!(worst > 0.05, "suspiciously exact — is the comparison live? worst {worst:.3}");
+
+        // Two more exactly known numbers from the same run: with no
+        // scattering, the fraction absorbed is 1 - exp(-mu_a L) and the rest
+        // leaves through the floor unscattered.
+        let n = r.photons as f64;
+        let absorbed = 1.0 - (-mua * 2.0f64).exp();
+        assert!(
+            (r.stats.absorbed / n - absorbed).abs() < 0.005,
+            "absorbed {:.4} of the beam, Beer-Lambert says {absorbed:.4}",
+            r.stats.absorbed / n
+        );
+        assert!(
+            (r.stats.transmitted / n - (1.0 - absorbed)).abs() < 0.005,
+            "transmitted {:.4}, expected {:.4}",
+            r.stats.transmitted / n,
+            1.0 - absorbed
+        );
+        assert!(r.stats.reflected / n < 1e-6, "nothing should come back out of the top");
+    }
+
     /* ── against the models it exists to check ── */
+
+    /// The headline claim of this model — that the diffusion models are
+    /// approximations of *this* — only means something if the two actually
+    /// agree where diffusion is supposed to be valid. So: a high-albedo
+    /// homogeneous slab, compared on-axis against FPW1992 in absolute terms,
+    /// several transport mean free paths below the surface and several
+    /// penetration depths above the floor.
+    ///
+    /// The one correction that has to be made explicit is the specular loss.
+    /// This model deducts it at launch and FPW1992 ignores it, so FPW1992's
+    /// fluence is that of a beam carrying 2.8% more power. Dividing it out is
+    /// the whole of the systematic difference between them here — which is
+    /// worth knowing, and is why this compares absolute levels rather than
+    /// the decay rate that the test below settles for.
+    #[test]
+    fn diffusive_regime_matches_fpw1992_in_absolute_terms() {
+        let (mua, mus, g, n) = (0.1, 100.0, 0.9, 1.4);
+        let mut p = params(vec![layer(mua, mus, g, n, 4.0)], 300.0);
+        p.nz = 40; // dz = 0.1 cm
+        let r = run(&p);
+
+        let fp = fpw1992::Fpw1992Params {
+            mua,
+            mus,
+            g,
+            n,
+            p0: 1.0,
+            beam_profile: "pencil".into(),
+            beam_width: 0.0,
+            beam_pattern: "single".into(),
+            pattern_count: 1,
+            pattern_spacing: 0.0,
+            lx: p.lx,
+            ly: p.ly,
+            lz: 4.0,
+            nx: p.nx,
+            ny: p.ny,
+            nz: p.nz,
+        };
+        let fd = fpw1992::derived(&fp);
+        let (diffusion, _) = fpw1992::compute_volume(&fp, &fd);
+
+        let (specular, _) = fresnel(N_OUTSIDE, n, 1.0);
+        let cx = p.nx / 2;
+        let mfp_transport = 1.0 / (mua + mus * (1.0 - g));
+
+        let mut compared = 0usize;
+        for iz in 0..p.nz {
+            let z = (iz as f64 + 0.5) * r.grid.dz;
+            // Below the first few transport mean free paths (diffusion has
+            // nothing to say above that) and well clear of the floor, which
+            // this model has and FPW1992's semi-infinite medium doesn't.
+            if z < 4.0 * mfp_transport || z > 1.4 {
+                continue;
+            }
+            let mc = r.grid.lookup(&r.phi, 0.0, z) / (1.0 - specular);
+            let dif = diffusion[cx + cx * p.nx + iz * p.nx * p.ny] as f64;
+            let ratio = mc / dif;
+            assert!(
+                (0.92..1.08).contains(&ratio),
+                "z = {z:.3} cm: Monte Carlo {mc:.4e} vs diffusion {dif:.4e}, ratio {ratio:.3}"
+            );
+            compared += 1;
+        }
+        assert!(compared >= 8, "only {compared} depths fell in the comparison band");
+
+        // And the other half of the claim: within the first transport mean
+        // free path diffusion is *wrong*, and wrong in the known direction.
+        // It replaces the beam with an isotropic source a mean free path
+        // down, which smears away the peak that the real, still-collimated
+        // light makes right at the surface.
+        let z_shallow = 0.5 * mfp_transport;
+        let mc = r.grid.lookup(&r.phi, 0.0, z_shallow) / (1.0 - specular);
+        let dif = diffusion[cx + cx * p.nx + 0 * p.nx * p.ny] as f64;
+        assert!(
+            mc > 2.0 * dif,
+            "at {z_shallow:.3} cm transport should far exceed diffusion, got {mc:.3e} vs {dif:.3e}"
+        );
+    }
 
     /// Far from the source in a high-albedo medium, transport and diffusion
     /// have to agree — that is the regime diffusion is derived for. Compared
