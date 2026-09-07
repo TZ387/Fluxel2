@@ -165,6 +165,14 @@ impl BeamPattern {
     pub fn half_extent(&self) -> (f64, f64) {
         self.spots.iter().fold((0.0f64, 0.0f64), |(mx, my), &(x, y)| (mx.max(x.abs()), my.max(y.abs())))
     }
+
+    /// The pattern's spot offsets themselves, for callers that need each
+    /// spot's position rather than just the aggregate half_extent (e.g.
+    /// fpw1992.rs's per-voxel validity overlay, which needs the nearest
+    /// spot to a given point).
+    pub fn spots(&self) -> &[(f64, f64)] {
+        &self.spots
+    }
 }
 
 /// The largest distance from any spot to any corner of the grid's footprint —

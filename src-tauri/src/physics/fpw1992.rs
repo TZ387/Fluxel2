@@ -218,6 +218,75 @@ pub fn compute_volume(p: &Fpw1992Params, d: &Fpw1992Derived) -> (Vec<f32>, Vec<f
     })
 }
 
+/// Per-voxel diffusion-validity code for the "show validity" overlay: 0 =
+/// invalid, 1 = marginal, 2 = valid. check_validity above renders one verdict
+/// for the whole run; this instead scores each voxel by how many transport
+/// mean free paths it sits from the nearest thing that breaks diffusion
+/// theory's isotropy assumption — the nearest spot's real source point (light
+/// hasn't scattered enough yet to be near-isotropic), or the true air-tissue
+/// interface at z = 0 (where the extrapolated-boundary condition is roughest).
+/// The grid's side and bottom faces aren't physical boundaries, just where
+/// this semi-infinite medium stops being rendered, so they don't count.
+///
+/// Thresholds of 1 and 3 mean free paths match the same rule of thumb
+/// liemert_kienle.rs's layer-thickness check uses ("thinner than one mfp
+/// means diffusion says nothing meaningful"): under 1 is definitely still
+/// ballistic/near-field, 3+ is comfortably diffuse, and the band between is
+/// a fade rather than a hard line.
+///
+/// This is a heuristic proxy, not a measured error — there's no reference
+/// solution in this codebase to diff against (that's what the roadmap's
+/// Monte Carlo item would be for). It's the same distance/ratio reasoning
+/// check_validity already gives in words, just evaluated per voxel instead
+/// of once for the whole grid.
+pub fn compute_validity_volume(p: &Fpw1992Params, d: &Fpw1992Derived) -> Vec<u8> {
+    let mfp = 1.0 / (p.mua + d.musp);
+    let z0 = mfp; // the real source's depth, same quantity compute_volume calls z0
+    let xs = p.lx / 2.0;
+    let ys = p.ly / 2.0;
+    let dx = p.lx / p.nx as f64;
+    let dy = p.ly / p.ny as f64;
+    let dz = p.lz / p.nz as f64;
+
+    let pattern = BeamPattern::from_params(&p.beam_pattern, p.pattern_count, p.pattern_spacing);
+    let spots = pattern.spots();
+
+    let mut codes = vec![0u8; p.nx * p.ny * p.nz];
+    for ix in 0..p.nx {
+        let x = (ix as f64 + 0.5) * dx;
+        for iy in 0..p.ny {
+            let y = (iy as f64 + 0.5) * dy;
+
+            // Nearest spot's source, laterally — z varies per voxel below,
+            // but the (x, y) column is shared by every z in it.
+            let rho2_min = spots
+                .iter()
+                .map(|&(sx, sy)| {
+                    let rx = x - (xs + sx);
+                    let ry = y - (ys + sy);
+                    rx * rx + ry * ry
+                })
+                .fold(f64::INFINITY, f64::min);
+
+            for iz in 0..p.nz {
+                let z = (iz as f64 + 0.5) * dz;
+                let d_source = (rho2_min + (z - z0) * (z - z0)).sqrt();
+                let d_min = d_source.min(z); // z doubles as depth below the top surface
+                let ratio = d_min / mfp;
+                let code = if ratio < 1.0 {
+                    0
+                } else if ratio < 3.0 {
+                    1
+                } else {
+                    2
+                };
+                codes[ix + iy * p.nx + iz * p.nx * p.ny] = code;
+            }
+        }
+    }
+    codes
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -327,5 +396,61 @@ mod tests {
             }
         }
         assert!(max_rel_err < 0.05, "max_rel_err = {max_rel_err:.4}");
+    }
+
+    /// The voxel right under the beam, one layer down (near both the real
+    /// source and the top surface) should read invalid; deep in the bulk,
+    /// far from any spot, it should read valid. Codes must also stay in
+    /// {0,1,2} everywhere — no stray values from an off-by-one in the
+    /// threshold comparisons.
+    #[test]
+    fn validity_volume_is_worst_near_source_and_surface_best_in_the_bulk() {
+        let mut params = base_params("pencil", 0.0);
+        params.lx = 4.0;
+        params.ly = 4.0;
+        params.lz = 4.0;
+        params.nx = 40;
+        params.ny = 40;
+        params.nz = 40;
+
+        let d = derived(&params);
+        let codes = compute_validity_volume(&params, &d);
+        assert!(codes.iter().all(|&c| c <= 2), "found a code outside 0..=2");
+
+        // Top-centre voxel: right where the beam enters, both the real
+        // source and the surface are within a fraction of a mean free path.
+        let at = |ix: usize, iy: usize, iz: usize| codes[ix + iy * params.nx + iz * params.nx * params.ny];
+        assert_eq!(at(20, 20, 0), 0, "voxel at the entry point should be invalid");
+
+        // Bottom corner: far in every direction (lx/ly/lz = 4 cm against a
+        // sub-millimetre mean free path at these optical properties).
+        assert_eq!(at(39, 39, 39), 2, "a far bulk voxel should be valid");
+    }
+
+    /// Two spots several cm apart: a voxel near one spot's source should
+    /// score by distance to *that* spot, not get dragged down by the other
+    /// being far away — i.e. it's a nearest-spot distance, not an average.
+    #[test]
+    fn validity_volume_uses_nearest_spot_not_pattern_centroid() {
+        let mut params = base_params("pencil", 0.0);
+        params.lx = 6.0;
+        params.ly = 2.0;
+        params.lz = 2.0;
+        params.nx = 60;
+        params.ny = 20;
+        params.nz = 20;
+        params.beam_pattern = "line".to_string();
+        params.pattern_count = 2;
+        params.pattern_spacing = 4.0; // spots at x = centre +/- 2 cm
+
+        let d = derived(&params);
+        let codes = compute_validity_volume(&params, &d);
+
+        // Voxel column under the left spot (x = centre - 2 cm = ix 20 of 60),
+        // one layer down: close to that spot's source even though the other
+        // spot sits 4 cm away.
+        let ix_left_spot = 20usize;
+        let idx = ix_left_spot + 10 * params.nx + 0 * params.nx * params.ny;
+        assert_eq!(codes[idx], 0, "voxel under one spot should score by that spot alone");
     }
 }

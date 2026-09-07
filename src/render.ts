@@ -58,6 +58,24 @@ function cmapOffset(t: number): number {
 }
 
 /* ================================================================
+   VALIDITY OVERLAY
+   ================================================================
+   An alternate, discrete colouring for the same slices: instead of the
+   computed field, shows how far each voxel sits from breaking the
+   diffusion approximation's isotropy assumption (see fpw1992.rs's
+   compute_validity_volume for exactly how the codes are decided — this
+   file only knows how to colour them). Colours mirror the app's own
+   warning palette (styles.css --danger/--warn/--accent2) so "invalid"
+   here reads the same as everywhere else in the UI.
+   ================================================================ */
+const VALIDITY_COLORS: RGB[] = [
+  [248, 81, 73], // 0 invalid  — --danger
+  [210, 153, 34], // 1 marginal — --warn
+  [63, 185, 80], // 2 valid    — --accent2
+];
+const VALIDITY_LABELS = ["invalid", "marginal", "valid"];
+
+/* ================================================================
    COLORBAR
    ================================================================ */
 export function drawColorbar(
@@ -90,6 +108,28 @@ export function drawColorbar(
   document.getElementById(loId)!.textContent = fmtSci(vmin);
 }
 
+/** Same slot as drawColorbar (same canvas + label ids), for when the
+    "show validity" toggle is on: three discrete bands instead of a
+    continuous gradient, with a word instead of a number at each. Valid
+    sits at the top to match drawColorbar's convention of the "good"
+    end (there, the max) being on top. */
+export function drawValidityLegend(cvId: string, hiId: string, midId: string, loId: string): void {
+  const cv = document.getElementById(cvId) as HTMLCanvasElement;
+  const w = 20,
+    h = 140;
+  cv.width = w;
+  cv.height = h;
+  const ctx = cv.getContext("2d")!;
+  const bandH = h / VALIDITY_COLORS.length;
+  [...VALIDITY_COLORS].reverse().forEach(([r, g, b], i) => {
+    ctx.fillStyle = `rgb(${r},${g},${b})`;
+    ctx.fillRect(0, i * bandH, w, bandH + 1); // +1 covers the rounding gap between bands
+  });
+  document.getElementById(hiId)!.textContent = VALIDITY_LABELS[2];
+  document.getElementById(midId)!.textContent = VALIDITY_LABELS[1];
+  document.getElementById(loId)!.textContent = VALIDITY_LABELS[0];
+}
+
 /* ================================================================
    3-SLICE RENDERER
    ================================================================
@@ -113,7 +153,9 @@ export function drawSlices(
   iy: number,
   iz: number,
   logMin: number,
-  logMax: number
+  logMax: number,
+  validity: Uint8Array | null = null,
+  showValidity = false
 ): void {
   const cv = document.getElementById(cvId) as HTMLCanvasElement;
   const W = cv.width || cv.offsetWidth || 400;
@@ -144,11 +186,23 @@ export function drawSlices(
     return v > 0 ? Math.log10(v) : logMin;
   }
 
+  function sampleValidity(x: number, y: number, z: number): number {
+    if (!validity || x < 0 || x >= nx || y < 0 || y >= ny || z < 0 || z >= nz) return 0;
+    return validity[x + y * nx + z * nx * ny];
+  }
+
+  /* One voxel's colour, in whichever mode is active. */
+  function colorAt(x: number, y: number, z: number): RGB {
+    if (showValidity) return VALIDITY_COLORS[sampleValidity(x, y, z)];
+    const k = cmapOffset((sampleLog(x, y, z) - logMin) / range);
+    return [CMAP_LUT[k], CMAP_LUT[k + 1], CMAP_LUT[k + 2]];
+  }
+
   /**
    * fillRect2D — rasterise one 2D slice into an ImageData region.
    * ox, oy  — canvas offset of top-left corner
    * rw, rh  — pixel dimensions on canvas
-   * sampleFn  — (col, row) → log-scaled voxel, col∈[0,cols-1], row∈[0,rows-1]
+   * posFn  — (col, row) → the [x,y,z] voxel it maps to, col∈[0,cols-1], row∈[0,rows-1]
    * cols, rows  — voxel dimensions of this slice
    */
   function fillRect2D(
@@ -156,7 +210,7 @@ export function drawSlices(
     oy: number,
     rw: number,
     rh: number,
-    sampleFn: (col: number, row: number) => number,
+    posFn: (col: number, row: number) => [number, number, number],
     cols: number,
     rows: number
   ): void {
@@ -166,11 +220,11 @@ export function drawSlices(
       const vc = Math.min(rows - 1, Math.floor((py * rows) / rh));
       for (let px = 0; px < rw; px++) {
         const uc = Math.min(cols - 1, Math.floor((px * cols) / rw));
-        const k = cmapOffset((sampleFn(uc, vc) - logMin) / range);
+        const [r, g, b] = colorAt(...posFn(uc, vc));
         const i = (py * rw + px) * 4;
-        d[i] = CMAP_LUT[k];
-        d[i + 1] = CMAP_LUT[k + 1];
-        d[i + 2] = CMAP_LUT[k + 2];
+        d[i] = r;
+        d[i + 1] = g;
+        d[i + 2] = b;
         d[i + 3] = 255;
       }
     }
@@ -185,17 +239,17 @@ export function drawSlices(
   /* Top-left: YZ slice at ix — horizontal=y, vertical=z */
   const tlX = PAD,
     tlY = PAD;
-  fillRect2D(tlX, tlY, HALF, VHALF, (c, r) => sampleLog(ix, c, r), ny, nz);
+  fillRect2D(tlX, tlY, HALF, VHALF, (c, r) => [ix, c, r], ny, nz);
 
   /* Top-right: XZ slice at iy — horizontal=x, vertical=z */
   const trX = PAD * 2 + HALF,
     trY = PAD;
-  fillRect2D(trX, trY, HALF, VHALF, (c, r) => sampleLog(c, iy, r), nx, nz);
+  fillRect2D(trX, trY, HALF, VHALF, (c, r) => [c, iy, r], nx, nz);
 
   /* Bottom-left: XY slice at iz — horizontal=x, vertical=y */
   const blX = PAD,
     blY = PAD * 2 + VHALF;
-  fillRect2D(blX, blY, HALF, VHALF, (c, r) => sampleLog(c, r, iz), nx, ny);
+  fillRect2D(blX, blY, HALF, VHALF, (c, r) => [c, r, iz], nx, ny);
 
   /* Slice labels — a light halo (stroke) behind the dark fill keeps them
      legible against the colormap's own near-black low end, where plain

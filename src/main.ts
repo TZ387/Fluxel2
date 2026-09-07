@@ -1,7 +1,7 @@
 import "./styles.css";
 import { MODELS, buildModelSelect } from "./models";
 import { buildModelParams, getParams } from "./ui-params";
-import { drawSlices, drawColorbar } from "./render";
+import { drawSlices, drawColorbar, drawValidityLegend } from "./render";
 import { runModel } from "./compute";
 import { buildHelp } from "./help";
 
@@ -57,14 +57,20 @@ const Simulation = {
   nz: 40,
   phi: null as VolumeCache | null,
   abs: null as VolumeCache | null,
+  /** Per-voxel validity codes for the current run, shared by both plots
+      (it's purely geometric — where the source and boundary are — so it
+      doesn't differ between the phi and abs fields). Null for models that
+      don't compute one. */
+  validity: null as Uint8Array | null,
 
   /** Store a freshly computed result and remember the grid it used. */
-  set(nx: number, ny: number, nz: number, phi: Float32Array, abs: Float32Array) {
+  set(nx: number, ny: number, nz: number, phi: Float32Array, abs: Float32Array, validity: Uint8Array | null) {
     this.nx = nx;
     this.ny = ny;
     this.nz = nz;
     this.phi = buildVolumeCache(phi);
     this.abs = buildVolumeCache(abs);
+    this.validity = validity;
   },
 
   /** 'phi' | 'abs' → the matching cache, or null if not yet computed. */
@@ -116,10 +122,17 @@ function getSlice(suffix: VolumeKind): { ix: number; iy: number; iz: number } {
   };
 }
 
+/** Reads straight from the checkbox rather than tracking a copy of its
+    state — same pattern getSlice above uses for the axis sliders. */
+function getShowValidity(suffix: VolumeKind): boolean {
+  return (document.getElementById(`vchk-${suffix}`) as HTMLInputElement).checked;
+}
+
 function redraw(suffix: VolumeKind): void {
   const cache = Simulation.volume(suffix);
   if (!cache) return;
   const { ix, iy, iz } = getSlice(suffix);
+  const showValidity = getShowValidity(suffix) && Simulation.validity !== null;
 
   drawSlices(
     `cv-${suffix}`,
@@ -131,9 +144,16 @@ function redraw(suffix: VolumeKind): void {
     iy,
     iz,
     cache.logMin,
-    cache.logMax
+    cache.logMax,
+    Simulation.validity,
+    showValidity
   );
-  drawColorbar(`cbar-${suffix}`, `clbl-${suffix}-hi`, `clbl-${suffix}-mid`, `clbl-${suffix}-lo`, cache.vmin, cache.vmax);
+
+  if (showValidity) {
+    drawValidityLegend(`cbar-${suffix}`, `clbl-${suffix}-hi`, `clbl-${suffix}-mid`, `clbl-${suffix}-lo`);
+  } else {
+    drawColorbar(`cbar-${suffix}`, `clbl-${suffix}-hi`, `clbl-${suffix}-mid`, `clbl-${suffix}-lo`, cache.vmin, cache.vmax);
+  }
 }
 
 /* ================================================================
@@ -178,13 +198,22 @@ async function runAndRender(): Promise<void> {
   const model = selectedModel();
 
   const t0 = performance.now();
-  const { phi, abs, derived, valid, reasons } = await runModel(model.command, p);
+  const { phi, abs, validity, derived, valid, reasons } = await runModel(model.command, p);
   const dt = (performance.now() - t0).toFixed(1);
 
-  Simulation.set(p.nx, p.ny, p.nz, phi, abs);
+  Simulation.set(p.nx, p.ny, p.nz, phi, abs, validity);
 
   /* Show plots section */
   (document.getElementById("plots") as HTMLElement).style.display = "";
+
+  /* The toggle only makes sense for models that computed a validity
+     buffer (currently FPW1992) — hide it, and reset it unchecked, for
+     the rest rather than leaving a control that does nothing. */
+  (["phi", "abs"] as const).forEach((suffix) => {
+    const row = document.getElementById(`vtoggle-${suffix}`) as HTMLElement;
+    row.hidden = validity === null;
+    if (validity === null) (document.getElementById(`vchk-${suffix}`) as HTMLInputElement).checked = false;
+  });
 
   /* Rebuild sliders with correct max values */
   buildAxisSliders("sl-phi", "phi");
@@ -274,3 +303,7 @@ buildModelSelect();
 document.getElementById("model-select")!.addEventListener("change", onModelChange);
 onModelChange();
 buildHelp("tab-help");
+
+(["phi", "abs"] as const).forEach((suffix) => {
+  document.getElementById(`vchk-${suffix}`)!.addEventListener("change", () => redraw(suffix));
+});
