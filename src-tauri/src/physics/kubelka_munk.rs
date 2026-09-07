@@ -7,6 +7,11 @@
 use crate::physics::validity::require;
 use serde::{Deserialize, Serialize};
 
+/// Deserialized from one entry of the frontend's layer array, which also
+/// carries the editable name that entry is shown under (src/ui-params.ts).
+/// Serde ignores fields a struct doesn't declare, which is what lets that
+/// name live inside the layer object — and the reason not to add
+/// `deny_unknown_fields` here.
 #[derive(Deserialize, Clone, Copy)]
 pub struct KMLayerParams {
     pub mua: f64, // K, absorption coefficient

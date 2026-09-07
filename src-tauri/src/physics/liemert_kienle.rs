@@ -80,6 +80,11 @@ use serde::{Deserialize, Serialize};
 /// Every layer carries its own thickness, so the grid's depth is the stack's
 /// total depth — the same arrangement as kubelka_munk.rs, the other layered
 /// model here.
+/// Deserialized from one entry of the frontend's layer array, which also
+/// carries the editable name that entry is shown under (src/ui-params.ts).
+/// Serde ignores fields a struct doesn't declare, which is what lets that
+/// name live inside the layer object — and the reason not to add
+/// `deny_unknown_fields` here.
 #[derive(Deserialize, Clone, Copy)]
 pub struct LKLayerParams {
     pub mua: f64,

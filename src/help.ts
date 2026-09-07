@@ -278,6 +278,11 @@ export function buildHelp(containerId: string): void {
           from that model's own schema, so different models show different fields.</li>
         <li>Adjust a slider, or type directly into any of the three number boxes next to it (min, max, or the
           current value) — the slider's range extends automatically if you type outside it.</li>
+        <li>A model with a layer stack opens with two layers and takes up to eight — <strong>+ Add
+          layer</strong> and <strong>Remove</strong> change the count, and the rest of the stack keeps its
+          values when you do. Click a layer's name to rename it: "Layer 1" until you say otherwise, and
+          better as "Epidermis" or "Subcutis" once a stack has more than two. Names are labels only, never
+          seen by the physics, and they follow their layer rather than its position.</li>
         <li>Click <strong>Compute &amp; visualise</strong>. A warning appears below the result if the model
           has something to say about the parameters you chose — the diffusion approximation being weakly
           justified, or, for Monte Carlo, too few photons for the grid you asked for (see each model's Limits

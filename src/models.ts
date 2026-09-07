@@ -21,6 +21,10 @@
          by min/max); comes back as an array, e.g. p.layers = [{...}, {...}].
          `repeat.defs` optionally gives the first instances their own
          starting values, so the stack can open non-uniform.
+         Each instance also carries an editable `name`, which comes back in
+         that array next to the params (p.layers[0].name). It is UI-only —
+         the Rust structs simply ignore it — but it is what a saved settings
+         file remembers a layer as, so "Dermis" stays "Dermis".
 
    To add a model: add a Rust module under src-tauri/src/physics/ with
    derived(), check_validity(), compute_volume() (see fpw1992.rs /
@@ -65,6 +69,11 @@ export interface RepeatSpec {
   min: number;
   max: number;
   def: number;
+  /** Singular name for one instance, e.g. "Layer". Names the add button, and
+      is what an instance is called before it is renamed ("Layer 1", "Layer
+      2", ...). Falls back to the group's `title`, which reads badly for this
+      ("Layers (top → bottom) 1"), so a repeating group should set it. */
+  itemLabel?: string;
   /** Starting values for the first instances, keyed by param id, so a model
       can open with a *contrasting* stack rather than N identical layers.
       Later instances fall back to each param's own `def`; values must lie
@@ -258,6 +267,7 @@ export const MODELS: Record<string, ModelDef> = {
           min: 1,
           max: 8,
           def: 2,
+          itemLabel: "Layer",
           defs: [
             { mua: 0.1, mus: 100, g: 0.9, n: 1.4, thickness: 0.3 },
             { mua: 0.1, mus: 50, g: 0.9, n: 1.4, thickness: 1.7 },
@@ -335,6 +345,7 @@ export const MODELS: Record<string, ModelDef> = {
           min: 1,
           max: 8,
           def: 2,
+          itemLabel: "Layer",
           defs: [
             { mua: 0.1, mus: 100, g: 0.9, n: 1.4, thickness: 0.3 },
             { mua: 0.1, mus: 50, g: 0.9, n: 1.4, thickness: 1.7 },
@@ -430,7 +441,7 @@ export const MODELS: Record<string, ModelDef> = {
       {
         id: "layers",
         title: "Layers (top → bottom)",
-        repeat: { min: 1, max: 8, def: 2 },
+        repeat: { min: 1, max: 8, def: 2, itemLabel: "Layer" },
         params: [
           { id: "mua", label: "K absorption coeff. [cm⁻¹]", min: 0.001, max: 5, step: 0.001, def: 0.1, fmt: fmt3 },
           { id: "mus", label: "S scattering coeff. [cm⁻¹]", min: 0.01, max: 300, step: 0.001, def: 50, fmt: fmt3 },

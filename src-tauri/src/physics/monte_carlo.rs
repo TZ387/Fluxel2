@@ -183,6 +183,11 @@ const COS_ZERO: f64 = 1.0 - 1e-12;
 /// runs (see the estimator's own validation).
 const SEED: u64 = 0x5EED_0000_0000_0000;
 
+/// Deserialized from one entry of the frontend's layer array, which also
+/// carries the editable name that entry is shown under (src/ui-params.ts).
+/// Serde ignores fields a struct doesn't declare, which is what lets that
+/// name live inside the layer object — and the reason not to add
+/// `deny_unknown_fields` here.
 #[derive(Deserialize, Clone, Copy)]
 pub struct McLayerParams {
     pub mua: f64,
