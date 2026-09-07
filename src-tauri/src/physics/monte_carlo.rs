@@ -444,6 +444,15 @@ struct TallyGrid {
     n_z: usize,
     dr: f64,
     dz: f64,
+    /// Reciprocals of the two above, for the same reason Layer precomputes
+    /// its own: finding a collision's bin is the innermost thing this model
+    /// does, and a divide costs several times a multiply. Worth about 10% of
+    /// the run — measured as the faster variant in four of five paired,
+    /// core-pinned A/B rounds, but the spread between repeats on a
+    /// thermally-throttled laptop is wider than the effect, so treat the
+    /// figure as a ballpark rather than a benchmark.
+    inv_dr: f64,
+    inv_dz: f64,
     /// Radius each radial bin's value is taken to represent. Not simply the
     /// bin's midpoint: a bin is an annulus, so its area-weighted mean radius
     /// sits slightly outside the midpoint, and near the axis — where the
@@ -460,7 +469,7 @@ impl TallyGrid {
                 (m - 1.0 / (12.0 * m)) * dr
             })
             .collect();
-        TallyGrid { n_r, n_z, dr, dz, r_c }
+        TallyGrid { n_r, n_z, dr, dz, inv_dr: 1.0 / dr, inv_dz: 1.0 / dz, r_c }
     }
 
     fn len(&self) -> usize {
@@ -477,11 +486,11 @@ impl TallyGrid {
     /// n_r * dr, so what lies beyond it is not part of the answer.
     #[inline]
     fn add(&self, tally: &mut [f64], x: f64, y: f64, z: f64, v: f64) {
-        let ir = ((x * x + y * y).sqrt() / self.dr) as usize;
+        let ir = ((x * x + y * y).sqrt() * self.inv_dr) as usize;
         if ir >= self.n_r {
             return;
         }
-        let iz = ((z / self.dz) as usize).min(self.n_z - 1);
+        let iz = ((z * self.inv_dz) as usize).min(self.n_z - 1);
         tally[ir * self.n_z + iz] += v;
     }
 
@@ -511,7 +520,7 @@ impl TallyGrid {
     /// grid's depth bins are the voxel grid's own, so every value asked for
     /// sits at a bin centre (see radial_grid / compute_volume).
     fn depth_bin(&self, z: f64) -> usize {
-        ((z / self.dz) as usize).min(self.n_z - 1)
+        ((z * self.inv_dz) as usize).min(self.n_z - 1)
     }
 
     /// Value of a table on this grid at an arbitrary (rho, z).
