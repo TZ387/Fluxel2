@@ -17,8 +17,13 @@ canvas-based 3-slice volume renderer. See [README.md](README.md)'s Roadmap for w
 none is otherwise specified.
 
 - `src/` — frontend (TypeScript, vanilla — no framework): `models.ts` (each model's parameter schema and
-  defaults), `ui-params.ts` (renders any model's params generically from that schema), `render.ts` (the
-  3-slice canvas renderer and colormap), `compute.ts` (the Tauri IPC bridge), `main.ts` (wires it together).
+  defaults), `ui-params.ts` (renders any model's params generically from that schema), `render.ts`
+  (colormaps, value scales, slice-plane images, the colourbar, and the flat 3-panel renderer), `render3d.ts`
+  (the 3-D slice box: an orthographic projection drawn with canvas 2-D affine transforms, occlusion ordered
+  by the three planes' BSP — its header comment explains why both of those, and why not WebGL),
+  `compute.ts` (the Tauri IPC bridge), `main.ts` (wires it together). Both renderers take the same
+  `SliceScene`, so the layout switch is a choice of function and nothing else; anything about *colour*
+  belongs in `render.ts`, which `render3d.ts` imports.
 - `src-tauri/src/physics/` — the physics itself, in Rust rather than TypeScript: each model's `derived()`,
   `check_validity()`, and `compute_volume()`, exposed to the frontend as a `<model>_summary`/`<model>_volume`
   Tauri command pair registered in `src-tauri/src/lib.rs`. Lives here rather than in `src/` as JS because the

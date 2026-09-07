@@ -1,9 +1,9 @@
 # Fluxel2
 
 A Tauri desktop app (TypeScript frontend + Rust backend) for simulating light transport in biological tissue,
-targeting Linux and Windows — a schema-driven parameter UI, a 3-slice volume renderer, and four models: a
-Monte Carlo reference plus three closed-form approximations (see Models below). See [AGENTS.md](AGENTS.md) for
-the current layout.
+targeting Linux and Windows — a schema-driven parameter UI, a 3-slice volume renderer (see Visualisation
+below), and four models: a Monte Carlo reference plus three closed-form approximations (see Models below).
+See [AGENTS.md](AGENTS.md) for the current layout.
 
 It started as a port of [Fluxel](https://github.com/TZ387/Fluxel), a static, build-free HTML/CSS/vanilla-JS
 browser simulator covering the diffusion-approximation part of this ground, but has since grown well beyond
@@ -70,6 +70,26 @@ scanner's row of pulses), or a square grid (a fractional handpiece's array) — 
 spots and superposing their fields, which transport being linear makes exact. The per-spot field is the same function at every spot, just shifted, so it
 is evaluated once and reused: a 25-spot grid costs under twice a single spot, not 25 times.
 
+## Visualisation
+
+Fluence and absorption are shown side by side, each as three orthogonal cuts through the volume, in either of
+two layouts. The default is a **3-D slice box**: the cuts drawn where they actually are inside the tissue, at
+true proportions, in a box with cm ticks on its outer edges and the layer interfaces marked on the back walls
+— so a 0.3 cm epidermis over a 1.7 cm dermis is drawn as the thin layer it is. Drag either plot to orbit it
+and both follow, since the point of the pairing is to read one against the other. The alternative **flat
+slices** layout puts the three cuts side by side with their own axes: nothing is foreshortened there, so a
+distance on screen is a distance in the tissue, which is the view to read a depth off. The colour scale is
+logarithmic by default and switchable to linear, the colormap is inferno by default with the original
+blue→red ramp still available, and the slice sliders step one voxel at a time but read out in cm.
+
+The 3-D box is plain canvas 2-D, no WebGL and no dependency, which is possible because an orthographic
+projection is linear: an axis-aligned slice rectangle projects to a parallelogram, and the map from image
+pixels to that parallelogram is exactly the affine transform canvas 2-D already applies to an image. The
+occlusion that a depth buffer would otherwise handle — three full planes intersect, so no fixed draw order
+works — comes from splitting each plane into quadrants at the other two and drawing the twelve pieces in the
+order the three planes' BSP defines. `src/render3d.ts`'s header comment has the reasoning, including why the
+obvious centroid-depth shortcut is wrong.
+
 ## Roadmap
 
 Adapted from [Fluxel's own roadmap](https://github.com/TZ387/Fluxel#roadmap) — a reasonable source of next
@@ -87,7 +107,22 @@ tasks if none is otherwise specified:
   A cheaper lever first, if runs ever feel slow: tracks average some 500 collisions per photon for typical
   tissue, and a more aggressive roulette threshold trades a little variance for a lot of wall clock.
 - **Export** — download fluence/absorption volumes as CSV or HDF5
-- **Isosurface overlay** — 3D isosurface rendering on top of the slice views
+- **Isosurface overlay** — a true isosurface in the 3-D box: the closed shell where the field equals one
+  chosen level, most usefully an absorbed-power density corresponding to a damage threshold, which answers
+  "how deep and how wide is the region above it" in one shape. Marching cubes belongs in Rust next to the
+  physics, returning a mesh over the same raw-bytes IPC the volumes already use; the rendering is the real
+  cost, since a translucent shell intersecting the slice planes is where the canvas-2-D approach above runs
+  out and WebGL starts paying for itself. Worth most for the multi-spot patterns, where the question is
+  whether adjacent spots' fields merge at depth. Cheaper and most of the value: **iso-contour lines** on the
+  slices themselves, which marching squares gives for a fraction of the work and which you can read a number
+  off.
+- **Model-vs-model difference view** — colour bounds come from each volume separately, so two runs are not
+  visually comparable today. A locked colour range plus a ratio against a stored previous run, on a diverging
+  colormap, would make the README's central claim — Monte Carlo as reference, the other three as
+  approximations — visible *spatially*: where diffusion goes wrong, not just that it does.
+- **1-D profile plots** — fluence against depth on the beam axis (log y) and against radius at a chosen
+  depth, with the Monte Carlo standard error as a band. These are what compare directly to the literature and
+  to the Beer-Lambert and diffusion asymptotes the Rust tests already check numerically.
 
 Cross-checking against a mature external tool ([MCX](https://mcx.space) and its OpenCL variant
 [mcxcl](https://github.com/fangq/mcxcl), MMC, mcmatlab) is still worth doing for anything load-bearing — they
