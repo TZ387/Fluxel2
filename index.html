@@ -40,11 +40,19 @@
 
         <!-- ── plots ───────────────────────────────────────────────── -->
         <div id="plots" style="display: none">
-          <!-- Shared by both plots: the scale and colormap are common so that
-               fluence and absorption stay directly comparable. -->
+          <!-- Shared by both plots: the camera is common so that fluence and
+               absorption stay directly comparable, and so are the scale and
+               colormap for the same reason. -->
           <div class="panel view-panel">
             <div class="panel-title">View</div>
             <div class="view-row">
+              <label
+                >Layout
+                <select id="view-mode">
+                  <option value="box3d">3-D slice box</option>
+                  <option value="flat">Flat slices</option>
+                </select>
+              </label>
               <label
                 >Colour scale
                 <select id="view-scale">
@@ -56,6 +64,7 @@
                 >Colormap
                 <select id="view-cmap"></select>
               </label>
+              <span class="view-hint" id="view-hint">Drag a plot to orbit &middot; double-click to reset the angle</span>
             </div>
           </div>
 

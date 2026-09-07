@@ -14,6 +14,7 @@ import {
   type SliceScene,
   type VolumeView,
 } from "./render";
+import { DEFAULT_CAMERA, EL_LIMIT, drawBox3D, type Camera } from "./render3d";
 import { runModel } from "./compute";
 import { buildHelp } from "./help";
 
@@ -185,22 +186,31 @@ function getShowValidity(suffix: VolumeKind): boolean {
 /* ================================================================
    VIEW CONTROLS
    ================================================================
-   The colour scale and the colormap are shared by both plots rather
-   than duplicated per panel: fluence and absorption are read against
-   each other, and they can only be if they are drawn the same way. The
-   per-panel controls stay per-panel — the slice planes and the overlay
-   toggle are questions you ask of one field at a time.
+   Layout, colour scale, colormap and the camera are shared by both
+   plots rather than duplicated per panel: fluence and absorption are
+   read against each other, and they can only be if they are drawn the
+   same way and from the same angle. The per-panel controls stay
+   per-panel — the slice planes and the overlay toggle are questions
+   you ask of one field at a time.
 
    Read straight off the controls at draw time, the same way getSlice
    reads the sliders, so there is no second copy of the state to keep
    in step.
    ================================================================ */
+type ViewMode = "box3d" | "flat";
+
+const camera: Camera = { ...DEFAULT_CAMERA };
+
 /** One plane-image cache per panel, so the two plots don't evict each
     other's slices on every redraw. */
 const planeCaches: Record<VolumeKind, PlaneCache> = {
   phi: createPlaneCache(),
   abs: createPlaneCache(),
 };
+
+function getViewMode(): ViewMode {
+  return (document.getElementById("view-mode") as HTMLSelectElement).value as ViewMode;
+}
 
 function getScaleKind(): ScaleKind {
   return (document.getElementById("view-scale") as HTMLSelectElement).value as ScaleKind;
@@ -210,7 +220,9 @@ function getColormapId(): string {
   return (document.getElementById("view-cmap") as HTMLSelectElement).value;
 }
 
-/** Everything the renderer needs for one panel, in physical units. */
+/** Everything a renderer needs for one panel, in physical units. Both
+    renderers take the same scene, so the layout switch is a choice of
+    function and nothing else. */
 function buildScene(suffix: VolumeKind): SliceScene | null {
   const cache = Simulation.volume(suffix);
   if (!cache) return null;
@@ -246,7 +258,11 @@ function buildScene(suffix: VolumeKind): SliceScene | null {
 function redraw(suffix: VolumeKind): void {
   const scene = buildScene(suffix);
   if (!scene) return;
-  drawSlices(`cv-${suffix}`, scene, planeCaches[suffix]);
+  const cv = document.getElementById(`cv-${suffix}`) as HTMLCanvasElement;
+  const box3d = getViewMode() === "box3d";
+  cv.style.cursor = box3d ? "grab" : "default";
+  if (box3d) drawBox3D(`cv-${suffix}`, scene, planeCaches[suffix], camera);
+  else drawSlices(`cv-${suffix}`, scene, planeCaches[suffix]);
 
   if (scene.view.showValidity) drawValidityLegend(`cbar-${suffix}`, Simulation.overlay!.legend);
   else drawColorbar(`cbar-${suffix}`, scene.view.scale, scene.view.lut);
@@ -436,14 +452,70 @@ document.getElementById("tab-btn-simulator")!.addEventListener("click", () => sw
 document.getElementById("tab-btn-help")!.addEventListener("click", () => switchTab("help"));
 
 /* ================================================================
+   CAMERA CONTROLS
+   ================================================================
+   Orbit rather than a fixed viewpoint, because the box is drawn at
+   equal aspect: a thin stack seen from the default angle is nearly
+   edge-on and needs tilting to be read at all, and no single angle
+   suits both a 2 cm cube and a 0.3 mm film. "Grab the object"
+   convention — drag right and the near face follows the pointer — to
+   match the cursor the canvas shows. There is no zoom; see the note on
+   Camera in render3d.ts for why.
+   ================================================================ */
+function bindCamera(suffix: VolumeKind): void {
+  const cv = document.getElementById(`cv-${suffix}`) as HTMLCanvasElement;
+  let lastX = 0,
+    lastY = 0,
+    dragging = false;
+
+  cv.addEventListener("pointerdown", (e) => {
+    if (getViewMode() !== "box3d" || !Simulation.hasData()) return;
+    dragging = true;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    cv.setPointerCapture(e.pointerId);
+    cv.style.cursor = "grabbing";
+  });
+
+  cv.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    camera.az -= (e.clientX - lastX) * 0.01;
+    camera.el = Math.max(-EL_LIMIT, Math.min(EL_LIMIT, camera.el + (e.clientY - lastY) * 0.01));
+    lastX = e.clientX;
+    lastY = e.clientY;
+    redrawAll();
+  });
+
+  const stop = (e: PointerEvent) => {
+    if (!dragging) return;
+    dragging = false;
+    if (cv.hasPointerCapture(e.pointerId)) cv.releasePointerCapture(e.pointerId);
+    cv.style.cursor = "grab";
+  };
+  cv.addEventListener("pointerup", stop);
+  cv.addEventListener("pointercancel", stop);
+
+  cv.addEventListener("dblclick", () => {
+    if (getViewMode() !== "box3d") return;
+    Object.assign(camera, DEFAULT_CAMERA);
+    redrawAll();
+  });
+}
+
+/* ================================================================
    INIT
    ================================================================ */
 function buildViewControls(): void {
   const cmap = document.getElementById("view-cmap") as HTMLSelectElement;
   cmap.innerHTML = COLORMAPS.map((c) => `<option value="${c.id}">${c.label}</option>`).join("");
-  ["view-scale", "view-cmap"].forEach((id) =>
-    document.getElementById(id)!.addEventListener("change", redrawAll)
+  ["view-mode", "view-scale", "view-cmap"].forEach((id) =>
+    document.getElementById(id)!.addEventListener("change", () => {
+      /* The hint only describes what the 3-D box does with a drag. */
+      document.getElementById("view-hint")!.hidden = getViewMode() !== "box3d";
+      redrawAll();
+    })
   );
+  (["phi", "abs"] as const).forEach(bindCamera);
 }
 
 buildViewControls();

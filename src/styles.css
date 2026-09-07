@@ -412,6 +412,12 @@ canvas.main { display: block; width: 100%; aspect-ratio: 1; background: #080c14;
   background-position: right 8px center;
   padding: 4px 24px 4px 8px;
 }
+.view-hint {
+  font-size: 0.75rem;
+  color: var(--text2);
+  opacity: 0.75;
+}
+
 /* ── axis sliders ────────────────────────────────────────────── */
 .axis-sliders { display: flex; flex-direction: column; gap: 6px; }
 
