@@ -35,6 +35,17 @@ none is otherwise specified.
   consequence worth knowing before adding tests: its own tests pin the worker count, because the test harness
   is already parallel and a run per test taking every core makes wall-clock assertions anywhere in the suite
   measure spare capacity rather than code. Keep any timing bound generous for the same reason.
+- `tests/` — frontend tests, run with `npm test`. No framework: `tests/run.mjs` bundles each
+  `tests/*.test.ts` with esbuild (which is what resolves the extensionless imports `src/` uses, the way Vite
+  does in the app) and runs each in its own node process. `harness.ts` is a recording canvas context plus a
+  failure counter — the renderers draw and return nothing, so the way to test them is to record what they
+  asked the context to do and check the recording. They cover the two renderers, and they exist mainly for
+  `render3d.ts`'s occlusion order, which is easy to get wrong and hard to see: `render3d.test.ts` rebuilds the
+  camera and projection independently from the az/el angles and compares the true depths of both surfaces
+  wherever two drawn quads overlap on screen, over the whole camera sphere. That check, and the flat layout's
+  margin arithmetic, each caught real bugs that looked fine at the default view. If you change either
+  renderer's geometry or margins, run this before trusting it — and if you change the tests, check they can
+  still fail (breaking the quad order or a margin by hand should light up the matching assertion).
 - `src-tauri/capabilities/default.json` — permission allow-list for what the webview's JS may call natively;
   extend this when adding plugins (e.g. filesystem access for CSV/HDF5 export).
 
@@ -43,6 +54,9 @@ none is otherwise specified.
 - Install deps: `npm install`
 - Dev server: `npm run tauri dev`
 - Production build: `npm run tauri build`
+- Frontend tests: `npm test` (see `tests/` above). `npm run build` typechecks them too, since tsconfig's
+  `include` covers `tests` as well as `src`.
+- Rust tests: `cargo test --manifest-path src-tauri/Cargo.toml`
 
 Desktop only (Linux + Windows) — no cross-compilation is set up. Producing a Windows installer requires
 building on Windows (e.g. via CI with a build matrix), and likewise for Linux.
