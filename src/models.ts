@@ -26,8 +26,11 @@
    derived(), check_validity(), compute_volume() (see fpw1992.rs /
    kubelka_munk.rs), register its `<name>_summary`/`<name>_volume`
    commands in lib.rs, then add one entry below (label, command,
-   summaryLine, paramGroups). The dropdown, param panel, run handler,
-   and warning display all pick it up automatically.
+   summaryLine, warningIntro, paramGroups, and optionally `overlay`
+   and `progress`). The dropdown, param panel, run handler, overlay
+   toggle and warning display all pick it up automatically. Order
+   matters in one way only: the first entry is what the dropdown
+   opens on.
    ================================================================ */
 
 export interface SliderParamDef {
@@ -76,6 +79,20 @@ export interface ParamGroup {
   repeat?: RepeatSpec;
 }
 
+/** What a model's per-voxel overlay buffer means, for the checkbox next to
+    each plot and the three bands of its legend. Per-model because the codes
+    (0/1/2) are the only thing the models share about it: for the diffusion
+    models they grade how well diffusion applies at that voxel, for Monte
+    Carlo how converged its estimate is there. Omitted by models that don't
+    compute an overlay at all (Kubelka-Munk). */
+export interface OverlaySpec {
+  /** Checkbox label under each plot. */
+  toggle: string;
+  /** Words for codes 0, 1, 2 — worst first, matching the legend's own order
+      (see render.ts's VALIDITY_COLORS). */
+  legend: [string, string, string];
+}
+
 export interface ModelDef<D = any> {
   label: string;
   /** Rust command prefix — invokes `<command>_summary` and `<command>_volume`. */
@@ -83,8 +100,14 @@ export interface ModelDef<D = any> {
   summaryLine: (derived: D, dt: string) => string;
   /** Heading above this model's validity warnings. Per-model because the
       models don't share an approximation: two are diffusion, one is two-flux,
-      and saying "diffusion" over Kubelka-Munk's warnings would be wrong. */
+      one is none at all, and saying "diffusion" over Kubelka-Munk's or Monte
+      Carlo's warnings would be wrong. */
   warningIntro: string;
+  overlay?: OverlaySpec;
+  /** Whether `<command>_volume` takes a progress channel and reports through
+      it while it runs (see src/compute.ts). Only worth it for a model whose
+      run is long enough to want saying so — Monte Carlo. */
+  progress?: boolean;
   paramGroups: ParamGroup[];
 }
 
@@ -95,6 +118,11 @@ const fmt0 = (v: number) => v.toFixed(0);
 
 /* Only worth saying when the beam pattern is more than one spot. */
 const spotsSuffix = (spots: number) => (spots > 1 ? ` | ${spots} spots` : "");
+
+/* Photon counts run from ten thousand to tens of millions, so a plain digit
+   string is unreadable at both ends. */
+const fmtCount = (v: number) =>
+  v >= 1e6 ? `${(v / 1e6).toFixed(v >= 1e7 ? 0 : 1)}M` : `${(v / 1e3).toFixed(0)}k`;
 
 /* Format a derived number for a summary line. Non-physical inputs leave a
    model's derived values NaN, which crosses the IPC boundary as JSON null —
@@ -142,6 +170,28 @@ const PATTERN_SPACING_PARAM: SliderParamDef = {
   showIf: { id: "beam_pattern", oneOf: ["line", "grid"] },
 };
 
+/* FPW1992 and Liemert-Kienle grade the same thing the same way, so the
+   wording is written once. */
+const DIFFUSION_OVERLAY: OverlaySpec = {
+  toggle: "Show diffusion validity",
+  legend: ["invalid", "marginal", "valid"],
+};
+
+export interface McLayerDerived {
+  musp: number;
+  albedo: number;
+  mfp: number;
+}
+
+export interface MonteCarloDerived {
+  layers: McLayerDerived[];
+  Lz: number;
+  spots: number;
+  photons: number;
+  specular: number;
+  n_r: number;
+}
+
 export interface Fpw1992Derived {
   musp: number;
   D: number;
@@ -171,6 +221,89 @@ export interface LiemertKienleDerived {
 }
 
 export const MODELS: Record<string, ModelDef> = {
+  /* First in the registry, so it is what the dropdown opens on (see
+     buildModelSelect below) — this is the reference model, and the one to
+     reach for unless a closed-form answer is specifically wanted. Its
+     parameters deliberately mirror Liemert-Kienle's, defaults included, so
+     switching between the two compares like with like: the same layered
+     slab, solved exactly here and by the diffusion approximation there. */
+  monteCarlo: {
+    label: "Monte Carlo — N-layer photon transport (reference)",
+    command: "monte_carlo",
+    progress: true,
+    summaryLine: (derived: MonteCarloDerived, dt: string) =>
+      `Done in ${dt} ms — ${fmtCount(derived.photons)} photons | ` +
+      `${derived.layers.length} layer${derived.layers.length === 1 ? "" : "s"} | ` +
+      `L<sub>z</sub> = ${num(derived.Lz, 3)} cm | ` +
+      `μ<sub>s</sub>' = ${derived.layers.map((l) => num(l.musp, 2)).join(", ")} cm⁻¹ | ` +
+      `specular loss = ${num(100 * derived.specular, 1)}% of P<sub>0</sub>` +
+      spotsSuffix(derived.spots),
+
+    /* Not "the approximation is weakly justified" like the other three:
+       there is no approximation to justify. What can go wrong here is
+       sampling — too few photons for the grid asked for. */
+    warningIntro:
+      "The physics below is exact, but the sampling behind it may not be — the volume is still shown:",
+
+    overlay: {
+      toggle: "Show Monte Carlo noise",
+      legend: ["error > 20%", "5–20%", "error < 5%"],
+    },
+
+    paramGroups: [
+      {
+        id: "layers",
+        title: "Layers (top → bottom)",
+        repeat: {
+          min: 1,
+          max: 8,
+          def: 2,
+          defs: [
+            { mua: 0.1, mus: 100, g: 0.9, n: 1.4, thickness: 0.3 },
+            { mua: 0.1, mus: 50, g: 0.9, n: 1.4, thickness: 1.7 },
+          ],
+        },
+        /* The same five per layer as Liemert-Kienle, and they mean the same
+           things — but g and n do more work here: g is the actual
+           Henyey-Greenstein parameter each scattering event is drawn from
+           rather than a way of reducing μ<sub>s</sub>, and every n step
+           inside the stack refracts and reflects light, not just the one at
+           the surface. */
+        params: [
+          { id: "mua", label: "μ<sub>a</sub> absorption [cm⁻¹]", min: 0.01, max: 5, step: 0.001, def: 0.1, fmt: fmt3 },
+          { id: "mus", label: "μ<sub>s</sub> scattering [cm⁻¹]", min: 1, max: 300, step: 0.001, def: 100, fmt: fmt3 },
+          { id: "g", label: "g anisotropy factor", min: 0, max: 0.99, step: 0.001, def: 0.9, fmt: fmt3 },
+          { id: "n", label: "n refractive index", min: 1.0, max: 1.7, step: 0.001, def: 1.4, fmt: fmt3 },
+          { id: "thickness", label: "thickness [cm]", min: 0.01, max: 3, step: 0.001, def: 0.5, fmt: fmt3 },
+        ],
+      },
+      {
+        id: "beam",
+        title: "Beam, grid & photon budget",
+        params: [
+          { id: "p0", label: "P<sub>0</sub> input power [W]", min: 0.01, max: 10, step: 0.001, def: 1.0, fmt: fmt3 },
+          BEAM_PROFILE_PARAM,
+          BEAM_WIDTH_PARAM,
+          BEAM_PATTERN_PARAM,
+          PATTERN_COUNT_PARAM,
+          PATTERN_SPACING_PARAM,
+          /* The one parameter with no counterpart in the other models: what
+             to spend on the answer. Noise falls as 1/√photons, so each
+             halving of the error bar costs four times the wait. The default
+             lands where the curve stops being worth it (about a second, and
+             90% of voxels inside 5%); the value box takes anything typed,
+             including past the slider's own range. */
+          { id: "photons_k", label: "Photon budget ×10³", min: 1, max: 2000, step: 1, def: 50, fmt: fmt0 },
+          { id: "lx", label: "L<sub>x</sub> [cm]", min: 0.5, max: 6, step: 0.001, def: 2, fmt: fmt3 },
+          { id: "ly", label: "L<sub>y</sub> [cm]", min: 0.5, max: 6, step: 0.001, def: 2, fmt: fmt3 },
+          { id: "nx", label: "N<sub>x</sub> voxels", min: 10, max: 400, step: 1, def: 40, fmt: fmt0 },
+          { id: "ny", label: "N<sub>y</sub> voxels", min: 10, max: 400, step: 1, def: 40, fmt: fmt0 },
+          { id: "nz", label: "N<sub>z</sub> voxels (through depth)", min: 10, max: 400, step: 1, def: 40, fmt: fmt0 },
+        ],
+      },
+    ],
+  } as ModelDef<MonteCarloDerived>,
+
   liemertKienle: {
     label: "Liemert & Kienle (2010) — N-layer, point-source diffusion",
     command: "liemert_kienle",
@@ -182,6 +315,7 @@ export const MODELS: Record<string, ModelDef> = {
       spotsSuffix(derived.spots),
 
   warningIntro: "Results may not be accurate — the diffusion approximation is weakly justified here:",
+    overlay: DIFFUSION_OVERLAY,
 
     /* Point source (pencil beam) through a stack of homogeneous layers —
        the combination FPW1992 (point source, one layer) and Kubelka-Munk
@@ -242,6 +376,7 @@ export const MODELS: Record<string, ModelDef> = {
       `δ = ${num(derived.delta, 3)} cm` + spotsSuffix(derived.spots),
 
   warningIntro: "Results may not be accurate — the diffusion approximation is weakly justified here:",
+    overlay: DIFFUSION_OVERLAY,
 
     paramGroups: [
       {

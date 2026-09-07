@@ -1,5 +1,5 @@
 import "./styles.css";
-import { MODELS, buildModelSelect } from "./models";
+import { MODELS, buildModelSelect, type OverlaySpec } from "./models";
 import { buildModelParams, getParams } from "./ui-params";
 import { drawSlices, drawColorbar, drawValidityLegend } from "./render";
 import { runModel } from "./compute";
@@ -57,20 +57,33 @@ const Simulation = {
   nz: 40,
   phi: null as VolumeCache | null,
   abs: null as VolumeCache | null,
-  /** Per-voxel validity codes for the current run, shared by both plots
-      (it's purely geometric — where the source and boundary are — so it
-      doesn't differ between the phi and abs fields). Null for models that
-      don't compute one. */
+  /** Per-voxel overlay codes for the current run, shared by both plots
+      (they grade the run itself, not the field, so they don't differ
+      between the phi and abs volumes). Null for models that don't compute
+      one. */
   validity: null as Uint8Array | null,
+  /** What those codes mean, carried alongside them rather than read back off
+      the dropdown at draw time: the two can disagree, since switching model
+      rebuilds the panel without discarding the volume already computed. */
+  overlay: null as OverlaySpec | null,
 
   /** Store a freshly computed result and remember the grid it used. */
-  set(nx: number, ny: number, nz: number, phi: Float32Array, abs: Float32Array, validity: Uint8Array | null) {
+  set(
+    nx: number,
+    ny: number,
+    nz: number,
+    phi: Float32Array,
+    abs: Float32Array,
+    validity: Uint8Array | null,
+    overlay: OverlaySpec | null
+  ) {
     this.nx = nx;
     this.ny = ny;
     this.nz = nz;
     this.phi = buildVolumeCache(phi);
     this.abs = buildVolumeCache(abs);
     this.validity = validity;
+    this.overlay = overlay;
   },
 
   /** 'phi' | 'abs' → the matching cache, or null if not yet computed. */
@@ -132,7 +145,7 @@ function redraw(suffix: VolumeKind): void {
   const cache = Simulation.volume(suffix);
   if (!cache) return;
   const { ix, iy, iz } = getSlice(suffix);
-  const showValidity = getShowValidity(suffix) && Simulation.validity !== null;
+  const showValidity = getShowValidity(suffix) && Simulation.validity !== null && Simulation.overlay !== null;
 
   drawSlices(
     `cv-${suffix}`,
@@ -150,7 +163,13 @@ function redraw(suffix: VolumeKind): void {
   );
 
   if (showValidity) {
-    drawValidityLegend(`cbar-${suffix}`, `clbl-${suffix}-hi`, `clbl-${suffix}-mid`, `clbl-${suffix}-lo`);
+    drawValidityLegend(
+      `cbar-${suffix}`,
+      `clbl-${suffix}-hi`,
+      `clbl-${suffix}-mid`,
+      `clbl-${suffix}-lo`,
+      Simulation.overlay!.legend
+    );
   } else {
     drawColorbar(`cbar-${suffix}`, `clbl-${suffix}-hi`, `clbl-${suffix}-mid`, `clbl-${suffix}-lo`, cache.vmin, cache.vmax);
   }
@@ -197,22 +216,34 @@ async function runAndRender(): Promise<void> {
   const st = document.getElementById("status")!;
   const model = selectedModel();
 
+  /* Monte Carlo runs for seconds, not milliseconds, so it reports how far
+     along it is (models.ts's `progress`). The run is off on a worker thread
+     either way — this only gives the wait something to show. */
+  const onProgress = model.progress
+    ? (fraction: number) => {
+        st.textContent = `Computing… ${Math.round(fraction * 100)}%`;
+      }
+    : undefined;
+
   const t0 = performance.now();
-  const { phi, abs, validity, derived, valid, reasons } = await runModel(model.command, p);
+  const { phi, abs, validity, derived, valid, reasons } = await runModel(model.command, p, onProgress);
   const dt = (performance.now() - t0).toFixed(1);
 
-  Simulation.set(p.nx, p.ny, p.nz, phi, abs, validity);
+  Simulation.set(p.nx, p.ny, p.nz, phi, abs, validity, model.overlay ?? null);
 
   /* Show plots section */
   (document.getElementById("plots") as HTMLElement).style.display = "";
 
-  /* The toggle only makes sense for models that computed a validity
-     buffer (currently FPW1992) — hide it, and reset it unchecked, for
-     the rest rather than leaving a control that does nothing. */
+  /* The toggle only makes sense for a model that computed an overlay buffer
+     — hide it, and reset it unchecked, for the rest rather than leaving a
+     control that does nothing. Its wording is the model's (models.ts's
+     `overlay`), since what the overlay grades differs between them. */
+  const overlay = validity === null ? null : model.overlay ?? null;
   (["phi", "abs"] as const).forEach((suffix) => {
     const row = document.getElementById(`vtoggle-${suffix}`) as HTMLElement;
-    row.hidden = validity === null;
-    if (validity === null) (document.getElementById(`vchk-${suffix}`) as HTMLInputElement).checked = false;
+    row.hidden = overlay === null;
+    if (overlay === null) (document.getElementById(`vchk-${suffix}`) as HTMLInputElement).checked = false;
+    else document.getElementById(`vlbl-${suffix}`)!.textContent = overlay.toggle;
   });
 
   /* Rebuild sliders with correct max values */

@@ -8,20 +8,28 @@
        cheap regardless of grid size.
      `<command>_volume(params)`  → raw bytes: phi then abs (f32 LE),
        each nx*ny*nz elements, then optionally a third nx*ny*nz-byte
-       block of per-voxel validity codes (u8: 0 invalid, 1 marginal,
-       2 valid) — sent as a `tauri::ipc::Response` to skip JSON
+       block of per-voxel overlay codes (u8: 0 worst, 1 middling,
+       2 best) — sent as a `tauri::ipc::Response` to skip JSON
        serialization of a multi-million-element array. Whether the
        third block is present is self-describing from the buffer's
        length (lib.rs's volume_bytes), since only some models compute
-       it (currently FPW1992 only).
+       it (every model but Kubelka-Munk). What the codes *mean* is the
+       model's business, not this file's — see models.ts's `overlay`.
+
+   A model that declares `progress` (models.ts) also takes a Channel
+   on its volume command and reports its fraction done through it as
+   it runs. Only Monte Carlo does: the closed-form models finish
+   before a progress readout would render. Either way every command
+   is `async` on the Rust side, which is what keeps the run off the
+   thread serving the webview.
    ================================================================ */
 
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 
 export interface RunResult<D = any> {
   phi: Float32Array;
   abs: Float32Array;
-  /** Per-voxel validity codes (0/1/2), or null for models that don't compute one. */
+  /** Per-voxel overlay codes (0/1/2), or null for models that don't compute one. */
   validity: Uint8Array | null;
   derived: D;
   valid: boolean;
@@ -30,11 +38,21 @@ export interface RunResult<D = any> {
 
 export async function runModel<D = any>(
   command: string,
-  params: Record<string, any>
+  params: Record<string, any>,
+  onProgress?: (fraction: number) => void
 ): Promise<RunResult<D>> {
+  /* The channel is created only when the caller wants one — a command that
+     doesn't declare the argument rejects the call if it's passed anyway. */
+  const volumeArgs: Record<string, any> = { params };
+  if (onProgress) {
+    const channel = new Channel<number>();
+    channel.onmessage = onProgress;
+    volumeArgs.progress = channel;
+  }
+
   const [summary, raw] = await Promise.all([
     invoke<{ derived: D; valid: boolean; reasons: string[] }>(`${command}_summary`, { params }),
-    invoke<ArrayBuffer | Uint8Array>(`${command}_volume`, { params }),
+    invoke<ArrayBuffer | Uint8Array>(`${command}_volume`, volumeArgs),
   ]);
 
   const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw);

@@ -61,20 +61,21 @@ function cmapOffset(t: number): number {
    VALIDITY OVERLAY
    ================================================================
    An alternate, discrete colouring for the same slices: instead of the
-   computed field, shows how far each voxel sits from breaking the
-   diffusion approximation's isotropy assumption (see fpw1992.rs's and
-   liemert_kienle.rs's compute_validity_volume for exactly how the codes
-   are decided per model — this file only knows how to colour them, the
-   same way regardless of which model produced them). Colours mirror the
-   app's own warning palette (styles.css --danger/--warn/--accent2) so
-   "invalid" here reads the same as everywhere else in the UI.
+   computed field, a per-voxel code (0 worst, 2 best) that each model
+   defines for itself — how far the voxel sits from breaking the diffusion
+   approximation for the two diffusion models, how converged the estimate
+   is for Monte Carlo (see each model's compute_validity_volume, and
+   models.ts's `overlay` for the words). This file only knows how to
+   colour them, the same way whichever model produced them, so the legend
+   takes its labels from the caller. Colours mirror the app's own warning
+   palette (styles.css --danger/--warn/--accent2) so the bad end reads the
+   same as everywhere else in the UI.
    ================================================================ */
 const VALIDITY_COLORS: RGB[] = [
   [248, 81, 73], // 0 invalid  — --danger
   [210, 153, 34], // 1 marginal — --warn
   [63, 185, 80], // 2 valid    — --accent2
 ];
-const VALIDITY_LABELS = ["invalid", "marginal", "valid"];
 
 /* ================================================================
    COLORBAR
@@ -114,7 +115,13 @@ export function drawColorbar(
     continuous gradient, with a word instead of a number at each. Valid
     sits at the top to match drawColorbar's convention of the "good"
     end (there, the max) being on top. */
-export function drawValidityLegend(cvId: string, hiId: string, midId: string, loId: string): void {
+export function drawValidityLegend(
+  cvId: string,
+  hiId: string,
+  midId: string,
+  loId: string,
+  labels: readonly [string, string, string]
+): void {
   const cv = document.getElementById(cvId) as HTMLCanvasElement;
   const w = 20,
     h = 140;
@@ -126,9 +133,9 @@ export function drawValidityLegend(cvId: string, hiId: string, midId: string, lo
     ctx.fillStyle = `rgb(${r},${g},${b})`;
     ctx.fillRect(0, i * bandH, w, bandH + 1); // +1 covers the rounding gap between bands
   });
-  document.getElementById(hiId)!.textContent = VALIDITY_LABELS[2];
-  document.getElementById(midId)!.textContent = VALIDITY_LABELS[1];
-  document.getElementById(loId)!.textContent = VALIDITY_LABELS[0];
+  document.getElementById(hiId)!.textContent = labels[2];
+  document.getElementById(midId)!.textContent = labels[1];
+  document.getElementById(loId)!.textContent = labels[0];
 }
 
 /* ================================================================

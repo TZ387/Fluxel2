@@ -10,9 +10,10 @@ HTML/CSS/vanilla-JS app; this project reworks it as a Tauri app (TypeScript fron
 targeting Linux and Windows as desktop platforms.
 
 The port is underway: two of Fluxel's theoretical models are implemented (Farrell-Patterson-Wilson 1992 and
-Kubelka-Munk), plus one added beyond upstream Fluxel (Liemert & Kienle 2010, N-layer point-source diffusion —
-see README.md's Models section for why), with a schema-driven parameter UI and a canvas-based 3-slice volume
-renderer. See [README.md](README.md)'s Roadmap for what's not built yet — a reasonable source of next tasks if
+Kubelka-Munk), plus two added beyond upstream Fluxel — Liemert & Kienle 2010 (N-layer point-source diffusion)
+and an N-layer Monte Carlo photon-transport model, which is the default and the reference the other three are
+checked against (see README.md's Models section for both) — with a schema-driven parameter UI and a
+canvas-based 3-slice volume renderer. See [README.md](README.md)'s Roadmap for what's not built yet — a reasonable source of next tasks if
 none is otherwise specified.
 
 - `src/` — frontend (TypeScript, vanilla — no framework): `models.ts` (each model's parameter schema and
@@ -22,7 +23,9 @@ none is otherwise specified.
   `check_validity()`, and `compute_volume()`, exposed to the frontend as a `<model>_summary`/`<model>_volume`
   Tauri command pair registered in `src-tauri/src/lib.rs`. Lives here rather than in `src/` as JS because the
   per-voxel compute loops are a genuine hot path at the grid sizes this app targets — the same reasoning
-  applies to any future compute-heavy addition.
+  applies to any future compute-heavy addition. `monte_carlo.rs` bends that shape slightly: its
+  `compute_volume()` also returns the overlay buffer (recomputing it separately would mean a second
+  simulation) and takes a progress callback, wired to a `tauri::ipc::Channel` in lib.rs.
 - `src-tauri/capabilities/default.json` — permission allow-list for what the webview's JS may call natively;
   extend this when adding plugins (e.g. filesystem access for CSV/HDF5 export).
 

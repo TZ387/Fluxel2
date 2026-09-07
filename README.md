@@ -1,12 +1,14 @@
 # Fluxel2
 
-A Tauri desktop app (TypeScript frontend + Rust backend) for simulating light transport in biological tissue
-(diffusion approximation), targeting Linux and Windows — a schema-driven parameter UI, a 3-slice volume
-renderer, and three theoretical models (see Models below). See [AGENTS.md](AGENTS.md) for the current layout.
+A Tauri desktop app (TypeScript frontend + Rust backend) for simulating light transport in biological tissue,
+targeting Linux and Windows — a schema-driven parameter UI, a 3-slice volume renderer, and four models: a
+Monte Carlo reference plus three closed-form approximations (see Models below). See [AGENTS.md](AGENTS.md) for
+the current layout.
 
 It started as a port of [Fluxel](https://github.com/TZ387/Fluxel), a static, build-free HTML/CSS/vanilla-JS
-browser simulator covering the same physics, but has since grown well beyond it: a third model
-(Liemert & Kienle 2010) and the beam-shaping features described below have no Fluxel counterpart.
+browser simulator covering the diffusion-approximation part of this ground, but has since grown well beyond
+it: the Monte Carlo model, Liemert & Kienle 2010, and the beam-shaping features described below have no Fluxel
+counterpart.
 
 ## AI-assisted development
 
@@ -20,6 +22,24 @@ Each model is self-contained in Rust under `src-tauri/src/physics/` — its comp
 comments with the full derivation notes are the single source of truth (see that directory, not here, for the
 math).
 
+- **Monte Carlo** — N-layer photon transport; the default, and the reference the other three are checked
+  against. Traces photon packets through the layer stack (hop by an exponentially sampled free path, deposit
+  weight at each collision, scatter by Henyey-Greenstein, Fresnel reflect/refract at every refractive-index
+  step including total internal reflection) rather than approximating the transport equation, so none of the
+  restrictions the other models carry apply: a layer thinner than a mean free path, absorption comparable to
+  scattering, an index mismatch between layers, or the unscattered first millimetre below the surface are all
+  handled as ordinary cases. Written from the published MCML algorithm (Wang, Jacques & Zheng 1995), not
+  ported from existing code, so it carries no third-party license obligations.
+
+  Every geometry it accepts is axisymmetric — flat layers, normal incidence, a radially symmetric beam — so it
+  scores photons into an (r, z) grid rather than 3-D voxels, which is exactly the axisymmetric kernel the two
+  point-source diffusion models already feed to `beam.rs`. One run therefore serves any beam pattern (see
+  below), and the beam *profile* costs nothing either: each packet's launch point is drawn from the profile
+  instead of the kernel being convolved with it afterwards. That is what makes an in-house Monte Carlo
+  affordable here — a full 3-D voxel simulation would need orders of magnitude more photons for the same
+  noise. The price is that the answer is statistical: the photon budget is a parameter, error falls as
+  1/√photons, and the run reports its own per-voxel standard error as an overlay (batch means over 16 equal
+  batches). `src-tauri/src/physics/monte_carlo.rs`.
 - **Farrell, Patterson & Wilson (1992)** — pencil beam, semi-infinite slab. A narrow collimated beam entering a
   homogeneous tissue slab, modelled as a real + image point-source pair below the surface (accounting for the
   refractive-index mismatch at the air-tissue boundary). Has genuine 3-D structure: fluence falls off radially
@@ -38,15 +58,15 @@ math).
   against a direct numerical solve. Not in upstream Fluxel — added here to fill the gap its own roadmap named.
   `src-tauri/src/physics/liemert_kienle.rs`.
 
-Both point-source models (FPW1992 and Liemert & Kienle) also support widening their beam from an idealised
+Both diffusion point-source models (FPW1992 and Liemert & Kienle) also support widening their beam from an idealised
 pencil to a Gaussian or flat-top (disk) profile — the finite-beam convolution shared between them lives in
 `src-tauri/src/physics/beam.rs`. Liemert-Kienle folds the beam's profile into its existing Fourier-Bessel series
 as a per-mode spectral factor (cheap, exact to the model's own cylinder-radius approximation); FPW1992 has no
 such series, so its convolution is a direct 2-D numerical integral over the beam footprint instead.
 
-Both also take a beam *pattern* — a single spot, a line (a scanner's row of pulses), or a square grid (a
-fractional handpiece's array) — sharing P0 equally between the spots and superposing their fields, which
-diffusion being linear makes exact. The per-spot field is the same function at every spot, just shifted, so it
+All three point-source models (Monte Carlo included) also take a beam *pattern* — a single spot, a line (a
+scanner's row of pulses), or a square grid (a fractional handpiece's array) — sharing P0 equally between the
+spots and superposing their fields, which transport being linear makes exact. The per-spot field is the same function at every spot, just shifted, so it
 is evaluated once and reused: a 25-spot grid costs under twice a single spot, not 25 times.
 
 ## Roadmap
@@ -54,13 +74,20 @@ is evaluated once and reused: a 25-spot grid costs under twice a single spot, no
 Adapted from [Fluxel's own roadmap](https://github.com/TZ387/Fluxel#roadmap) — a reasonable source of next
 tasks if none is otherwise specified:
 
+- **Parallel Monte Carlo** — the model is single-threaded today, and its batches are already the right unit
+  of work: independent, with a private tally each and one reduction at the end, so there is nothing to lock
+  and nothing to atomically add. Multi-core CPU (`rayon`, or `std::thread::scope` to stay dependency-free) is
+  the near-linear win and the obvious next step. A portable GPU path — `wgpu` + a WGSL compute shader, which
+  reaches Vulkan on Linux and DX12 on Windows and so runs on Intel and AMD integrated graphics, not just
+  NVIDIA — is the step after, and worth it only on a discrete card: photon transport is branch-divergent and
+  tally-atomic-heavy, the shape a small integrated GPU handles worst.
 - **Export** — download fluence/absorption volumes as CSV or HDF5
 - **Isosurface overlay** — 3D isosurface rendering on top of the slice views
 
-Deliberately not planned: **Monte Carlo validation**. Mature, GPU-parallelized MC tools already cover this ground — MCX and its OpenCL
-variant [mcxcl](https://github.com/fangq/mcxcl), MMC, mcmatlab — and none of them are practical to bundle into
-a Tauri desktop app. Cross-checking a result here means running the same optical properties through one of
-those directly, not reimplementing a slower, less-validated one in-house.
+Cross-checking against a mature external tool ([MCX](https://mcx.space) and its OpenCL variant
+[mcxcl](https://github.com/fangq/mcxcl), MMC, mcmatlab) is still worth doing for anything load-bearing — they
+are GPU-parallelized, far more general, and far more validated than the model here. What they are not is
+bundleable into a Tauri desktop app, which is why this one exists.
 
 ## Development
 

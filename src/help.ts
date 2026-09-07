@@ -26,19 +26,100 @@ interface ModelHelp {
   reference: string;
 }
 
-/* Both point-source models take the same beam pattern, described the same
-   way, so the paragraph is written once. */
+/* All three point-source models take the same beam pattern, described the
+   same way, so the paragraph is written once. */
 const PATTERN_PARAGRAPH =
   "The beam can also be aimed at more than one spot: a line (what a scanner lays down as it sweeps — a row " +
   "of discrete pulses, which approaches a continuous sweep once the pitch is small next to the beam width) " +
   "or a square grid (a fractional handpiece's array of microbeams). P<sub>0</sub> stays the pattern's total " +
-  "power, so the spots share it equally, and the diffusion equation being linear means the result is simply " +
+  "power, so the spots share it equally, and light transport being linear means the result is simply " +
   "their fluences added up. The per-spot field is computed once and reused at every spot, so a 25-spot grid " +
   "costs barely more than a single spot rather than 25 times as much.";
 
-/* Ordered to match the dropdown — newest/most general (and default)
-   model first — rather than publication year. */
+/* Ordered to match the dropdown — the reference model (and default) first,
+   then the closed-form ones from most to least general — rather than by
+   publication year. */
 const MODEL_HELP: ModelHelp[] = [
+  {
+    modelId: "monteCarlo",
+    description: [
+      "The only model here that isn't an approximation. Rather than solving a simplified transport equation " +
+        "in closed form, it traces individual photon packets through the layer stack and lets the statistics " +
+        "of many tracks stand in for the answer. Nothing is assumed about scattering dominating absorption, " +
+        "about layers being thick enough to diffuse across, or about the boundary being far away — so where " +
+        "the other three models warn that they are outside their range, this one simply keeps working. It is " +
+        "the model to check the others against, and the one to reach for unless a closed-form answer is " +
+        "specifically wanted.",
+      "Each packet is launched at the surface with unit weight, less the specular reflection off it. It then " +
+        "repeats three steps until it is absorbed or leaves: hop a distance drawn from the exponential " +
+        "distribution of free paths; deposit part of its weight where it lands; and scatter into a new " +
+        "direction drawn from the Henyey-Greenstein phase function. At every refractive-index step — the " +
+        "surface, each internal interface, the floor — it either reflects or refracts according to the " +
+        "Fresnel coefficients, total internal reflection included, which is why an index mismatch between " +
+        "layers matters here and not in Kubelka-Munk. A step interrupted by an interface is not redrawn but " +
+        "continued on the other side, carrying its unused optical depth across.",
+      "Every geometry this model accepts is symmetric about the beam axis — flat parallel layers, normal " +
+        "incidence, a radially symmetric beam — so photons are scored into an (r, z) grid rather than a 3-D " +
+        "one. That is what makes it affordable: every photon contributes to the same 2-D table, so a run " +
+        "needs far fewer of them than a voxel-based Monte Carlo would for the same noise. The beam profile " +
+        "comes free with it, and more exactly than a convolution would give: each packet's launch point is " +
+        "drawn from the profile itself.",
+      "The price is that the answer is an estimate. Its error falls as 1/&radic;photons, so each halving of " +
+        "the error bar costs four times the wait — which makes the photon budget a real choice rather than a " +
+        "detail, and worth sweeping. To keep that honest the run is split into equal batches and their spread " +
+        "used to estimate the error per bin, which is what the <em>Show Monte Carlo noise</em> overlay " +
+        "displays: green where the relative error is under 5%, amber to 20%, red beyond. A given set of " +
+        "parameters always produces the same volume, so a plot never changes for a reason you didn't cause.",
+      PATTERN_PARAGRAPH,
+    ],
+    equation:
+      "s = &minus;ln(&xi;) / &mu;<sub>t</sub>\n" +
+      "cos&theta; = [ 1 + g&sup2; &minus; ((1&minus;g&sup2;)/(1&minus;g+2g&xi;))&sup2; ] / 2g\n" +
+      "&Delta;w = w &middot; &mu;<sub>a</sub>/&mu;<sub>t</sub>\n\n" +
+      "R = &frac12;[ ((n<sub>1</sub>cos&theta;<sub>i</sub> &minus; n<sub>2</sub>cos&theta;<sub>t</sub>) / " +
+      "(n<sub>1</sub>cos&theta;<sub>i</sub> + n<sub>2</sub>cos&theta;<sub>t</sub>))&sup2; + " +
+      "((n<sub>1</sub>cos&theta;<sub>t</sub> &minus; n<sub>2</sub>cos&theta;<sub>i</sub>) / " +
+      "(n<sub>1</sub>cos&theta;<sub>t</sub> + n<sub>2</sub>cos&theta;<sub>i</sub>))&sup2; ]\n\n" +
+      "&Phi;(r, z) = &Sigma; (w / &mu;<sub>t</sub>) / (N &middot; &Delta;V)\n" +
+      "&mu;<sub>t</sub> = &mu;<sub>a</sub> + &mu;<sub>s</sub>",
+    eqnNote:
+      "Sampling rules rather than a solution: &xi; is a fresh uniform random number on (0, 1], and the last " +
+      "line is the estimator — the summed weight-per-collision in each (r, z) bin, over N launched photons " +
+      "and the bin's volume. Note that &mu;<sub>s</sub> and g enter separately here; the diffusion models " +
+      "only ever see the combination &mu;<sub>s</sub>' = &mu;<sub>s</sub>(1&minus;g).",
+    useFor:
+      "Ground truth — checking any of the three closed-form models on a case you care about, especially one " +
+      "they warn about. And as a model in its own right wherever they can't go: layers thinner than a mean " +
+      "free path, absorption comparable to scattering, refractive-index steps inside the stack, or the first " +
+      "millimetre below the surface where light hasn't scattered enough to diffuse yet.",
+    limits: [
+      "The answer carries statistical noise, falling as 1/&radic;photons. Switch on the noise overlay to see " +
+        "where it lands, because it is rarely where you would guess: the innermost radial bins enclose the " +
+        "least volume, so they collect the fewest photon collisions despite sitting in the brightest part of " +
+        "the field, and the beam axis is usually the first thing to go amber. The far outskirts are the other " +
+        "weak spot, for the opposite reason — hardly any photon gets that far.",
+      "Cost scales with the photon budget and with how long each track runs, which is set by the tissue: " +
+        "weakly absorbing, strongly scattering layers between two index steps trap light and make for long " +
+        "tracks. Roughly a second for the default budget on the default grid.",
+      "The geometry has to stay symmetric about the beam axis: flat parallel layers, normal incidence, a " +
+        "radially symmetric beam. Tilted incidence, a warped interface, or an inclusion inside a layer would " +
+        "all need a full 3-D grid instead, and are not supported.",
+      "The innermost radial bin is an area average over 0 &le; r &lt; &Delta;r, so an idealised pencil " +
+        "beam's on-axis peak gets smoothed over that bin. The app warns when the bin is wide next to a " +
+        "transport mean free path; a beam profile with a real width has no such issue.",
+      "The specular reflection off the surface is deducted here and ignored by the diffusion models, so this " +
+        "model's absolute fluence sits a few percent below theirs (2.8% at n = 1.4) even where they agree " +
+        "perfectly otherwise. That difference is real physics, not a discrepancy between them.",
+      "Steady state, unpolarized, elastic scattering: no time-of-flight gating, no polarization, no " +
+        "fluorescence, and a single refractive index per layer. A beam pattern is simultaneous superposition, " +
+        "the same as for the other models.",
+    ],
+    reference:
+      "L. Wang, S. L. Jacques, L. Zheng, “MCML — Monte Carlo modeling of light transport in multi-layered " +
+      "tissues,” Comput. Methods Programs Biomed. 47(2), 131–146 (1995); phase function from L. G. Henyey, " +
+      "J. L. Greenstein, “Diffuse radiation in the Galaxy,” Astrophys. J. 93, 70–83 (1941). Implemented here " +
+      "from those published algorithms — see src-tauri/src/physics/monte_carlo.rs.",
+  },
   {
     modelId: "liemertKienle",
     description: [
@@ -195,10 +276,14 @@ export function buildHelp(containerId: string): void {
           from that model's own schema, so different models show different fields.</li>
         <li>Adjust a slider, or type directly into any of the three number boxes next to it (min, max, or the
           current value) — the slider's range extends automatically if you type outside it.</li>
-        <li>Click <strong>Compute &amp; visualise</strong>. A warning appears below the result if the diffusion
-          approximation is weakly justified for the parameters you've chosen (see each model's Limits below) —
-          the result is still shown, but treat it with appropriate skepticism.</li>
+        <li>Click <strong>Compute &amp; visualise</strong>. A warning appears below the result if the model
+          has something to say about the parameters you chose — the diffusion approximation being weakly
+          justified, or, for Monte Carlo, too few photons for the grid you asked for (see each model's Limits
+          below). The result is still shown, but treat it with appropriate skepticism.</li>
         <li>Drag the x / y / z sliders beneath each plot to move the three slice planes through the volume.</li>
+        <li>Tick the overlay checkbox under a plot to recolour those slices by how much to trust them
+          voxel-by-voxel: for the diffusion models, how far each voxel is from breaking the approximation;
+          for Monte Carlo, how converged its estimate is there. Kubelka-Munk has no such overlay.</li>
         <li>The colour scale is logarithmic, to show the full dynamic range from near the source to far from
           it — read the colourbar's numeric labels, not just its colour, when comparing two runs.</li>
       </ol>
