@@ -10,12 +10,6 @@ browser simulator covering the diffusion-approximation part of this ground, but 
 it: the Monte Carlo model, Liemert & Kienle 2010, and the beam-shaping features described below have no Fluxel
 counterpart.
 
-## AI-assisted development
-
-This project gives AI coding agents a fairly free hand — including letting them commit directly during some
-sessions, when explicitly authorized (see the commit convention in [AGENTS.md](AGENTS.md)). Keep that in mind
-when reading the code or commit history here.
-
 ## Models
 
 Each model is self-contained in Rust under `src-tauri/src/physics/` — its compute, validity checks, and doc
