@@ -393,6 +393,27 @@ input[type=range]:focus-visible { box-shadow: 0 0 0 3px rgba(88,166,255,0.3); }
 .canvas-wrap { position: relative; width: 100%; }
 canvas.main { display: block; width: 100%; aspect-ratio: 1; background: #080c14; border-radius: 4px; }
 
+/* ── hover readout ───────────────────────────────────────────── */
+/* Absolutely placed inside .canvas-wrap, which was already positioned.
+   pointer-events: none matters — the readout sits under the cursor by
+   construction, and without it the plot would stop receiving the very moves
+   that put it there. */
+.hover-readout {
+  position: absolute;
+  pointer-events: none;
+  z-index: 2;
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: rgba(13, 17, 23, 0.92);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.6875rem;   /* 11px, matching the in-canvas tick labels */
+  line-height: 1.45;
+  white-space: pre;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+}
+
 /* ── view controls ───────────────────────────────────────────── */
 .view-row {
   display: flex;

@@ -9,12 +9,14 @@ import {
   drawSlices,
   drawValidityLegend,
   makeScale,
+  pickFlat,
   type PlaneCache,
+  type Probe,
   type ScaleKind,
   type SliceScene,
   type VolumeView,
 } from "./render";
-import { DEFAULT_CAMERA, EL_LIMIT, drawBox3D, type Camera } from "./render3d";
+import { DEFAULT_CAMERA, EL_LIMIT, drawBox3D, pick3D, type Camera } from "./render3d";
 import { runModel } from "./compute";
 import { buildHelp } from "./help";
 
@@ -35,6 +37,11 @@ import { buildHelp } from "./help";
    across the two). Per-pixel it costs ~25 ms a redraw instead.
    ================================================================ */
 type VolumeKind = "phi" | "abs";
+
+/** Units for each field, for the hover readout — the plot titles carry them
+    for the eye, but the readout quotes a number and has to say what of. */
+const UNITS: Record<VolumeKind, string> = { phi: "W/cm\u00B2", abs: "W/cm\u00B3" };
+const SYMBOL: Record<VolumeKind, string> = { phi: "\u03A6", abs: "A" };
 
 interface VolumeCache {
   /** The volume as computed — a view onto the IPC buffer, never copied. */
@@ -260,7 +267,9 @@ function redraw(suffix: VolumeKind): void {
   if (!scene) return;
   const cv = document.getElementById(`cv-${suffix}`) as HTMLCanvasElement;
   const box3d = getViewMode() === "box3d";
-  cv.style.cursor = box3d ? "grab" : "default";
+  /* Both layouts are hoverable, so neither gets the default arrow: grab says
+     the box can be turned, crosshair says the flat panels can be read. */
+  cv.style.cursor = box3d ? "grab" : "crosshair";
   if (box3d) drawBox3D(`cv-${suffix}`, scene, planeCaches[suffix], camera);
   else drawSlices(`cv-${suffix}`, scene, planeCaches[suffix]);
 
@@ -452,8 +461,84 @@ document.getElementById("tab-btn-simulator")!.addEventListener("click", () => sw
 document.getElementById("tab-btn-help")!.addEventListener("click", () => switchTab("help"));
 
 /* ================================================================
-   CAMERA CONTROLS
+   HOVER READOUT
    ================================================================
+   The plots could be read but not interrogated: you could see that a
+   region was bright without being able to put a number on it, which
+   for a simulator is most of the point. Hovering now names the
+   position in cm and the value there — and the overlay code too when
+   the overlay is on, which is the only way to see *which* band a
+   particular voxel fell in rather than just its colour.
+
+   A DOM element rather than something drawn into the canvas, so
+   following the cursor costs no redraw at all: the plot itself only
+   changes when the slices or the camera do.
+   ================================================================ */
+function formatProbe(suffix: VolumeKind, probe: Probe): string {
+  const lines = [
+    `x ${probe.x.toFixed(3)}  y ${probe.y.toFixed(3)}  z ${probe.z.toFixed(3)} cm`,
+    `${SYMBOL[suffix]} = ${probe.value.toPrecision(4)} ${UNITS[suffix]}`,
+  ];
+  /* Only meaningful while the overlay is the thing being drawn — the codes
+     grade the run, and quoting one next to a field value the user is not
+     looking at would just be noise. */
+  if (probe.code !== null && getShowValidity(suffix) && Simulation.overlay) {
+    lines.push(Simulation.overlay.legend[probe.code] ?? "");
+  }
+  return lines.join("\n");
+}
+
+/** Canvas-pixel coordinates for a pointer event. The canvas is sized in CSS
+    pixels, but a browser zoom or a fractional layout makes the two differ, so
+    the ratio is taken from the element rather than assumed to be 1. */
+function canvasPoint(cv: HTMLCanvasElement, e: PointerEvent): { px: number; py: number } {
+  const r = cv.getBoundingClientRect();
+  return {
+    px: ((e.clientX - r.left) * cv.width) / (r.width || 1),
+    py: ((e.clientY - r.top) * cv.height) / (r.height || 1),
+  };
+}
+
+function updateReadout(suffix: VolumeKind, e: PointerEvent | null): void {
+  const box = document.getElementById(`hov-${suffix}`) as HTMLElement;
+  const cv = document.getElementById(`cv-${suffix}`) as HTMLCanvasElement;
+  const scene = e && Simulation.hasData() ? buildScene(suffix) : null;
+  if (!scene || !e) {
+    box.hidden = true;
+    return;
+  }
+  const { px, py } = canvasPoint(cv, e);
+  const probe =
+    getViewMode() === "box3d"
+      ? pick3D(scene, cv.width, cv.height, camera, px, py)
+      : pickFlat(scene, cv.width, cv.height, px, py);
+  if (!probe) {
+    box.hidden = true;
+    return;
+  }
+  box.textContent = formatProbe(suffix, probe);
+  box.hidden = false;
+
+  /* Offset from the cursor, flipped near an edge so the readout stays inside
+     the plot instead of forcing the panel to scroll. */
+  const pad = 14;
+  const wrapW = cv.offsetWidth || cv.width;
+  const wrapH = cv.offsetHeight || cv.height;
+  const cx = ((px / cv.width) * wrapW) | 0;
+  const cy = ((py / cv.height) * wrapH) | 0;
+  const flipX = cx + pad + box.offsetWidth > wrapW;
+  const flipY = cy + pad + box.offsetHeight > wrapH;
+  box.style.left = `${Math.max(0, flipX ? cx - pad - box.offsetWidth : cx + pad)}px`;
+  box.style.top = `${Math.max(0, flipY ? cy - pad - box.offsetHeight : cy + pad)}px`;
+}
+
+/* ================================================================
+   POINTER: ORBIT AND HOVER
+   ================================================================
+   One set of handlers for both, since they are the same gestures on
+   the same canvas: a move with no button down is a hover, a drag is an
+   orbit, and the two must not happen at once.
+
    Orbit rather than a fixed viewpoint, because the box is drawn at
    equal aspect: a thin stack seen from the default angle is nearly
    edge-on and needs tilting to be read at all, and no single angle
@@ -462,7 +547,7 @@ document.getElementById("tab-btn-help")!.addEventListener("click", () => switchT
    match the cursor the canvas shows. There is no zoom; see the note on
    Camera in render3d.ts for why.
    ================================================================ */
-function bindCamera(suffix: VolumeKind): void {
+function bindPointer(suffix: VolumeKind): void {
   const cv = document.getElementById(`cv-${suffix}`) as HTMLCanvasElement;
   let lastX = 0,
     lastY = 0,
@@ -470,6 +555,9 @@ function bindCamera(suffix: VolumeKind): void {
 
   cv.addEventListener("pointerdown", (e) => {
     if (getViewMode() !== "box3d" || !Simulation.hasData()) return;
+    /* The readout would otherwise sit in the middle of the drag, describing a
+       point the cursor has already left. */
+    updateReadout(suffix, null);
     dragging = true;
     lastX = e.clientX;
     lastY = e.clientY;
@@ -478,7 +566,10 @@ function bindCamera(suffix: VolumeKind): void {
   });
 
   cv.addEventListener("pointermove", (e) => {
-    if (!dragging) return;
+    if (!dragging) {
+      updateReadout(suffix, e);
+      return;
+    }
     camera.az -= (e.clientX - lastX) * 0.01;
     camera.el = Math.max(-EL_LIMIT, Math.min(EL_LIMIT, camera.el + (e.clientY - lastY) * 0.01));
     lastX = e.clientX;
@@ -494,6 +585,7 @@ function bindCamera(suffix: VolumeKind): void {
   };
   cv.addEventListener("pointerup", stop);
   cv.addEventListener("pointercancel", stop);
+  cv.addEventListener("pointerleave", () => updateReadout(suffix, null));
 
   cv.addEventListener("dblclick", () => {
     if (getViewMode() !== "box3d") return;
@@ -515,7 +607,7 @@ function buildViewControls(): void {
       redrawAll();
     })
   );
-  (["phi", "abs"] as const).forEach(bindCamera);
+  (["phi", "abs"] as const).forEach(bindPointer);
 }
 
 buildViewControls();

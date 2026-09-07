@@ -24,12 +24,13 @@ import {
   makeScale,
   colormapLut,
   createPlaneCache,
+  pickFlat,
   planeCanvas,
   type ScaleKind,
   type SliceScene,
   type VolumeView,
 } from "../src/render";
-import { createStubCanvas, expect, finish, inCase, installStubDocument, type StubCanvas } from "./harness";
+import { createStubCanvas, expect, fail, finish, inCase, installStubDocument, type StubCanvas } from "./harness";
 
 function volume(nx: number, ny: number, nz: number, kind: ScaleKind = "log"): VolumeView {
   const data = new Float32Array(nx * ny * nz);
@@ -248,5 +249,116 @@ inCase("plane cache");
   expect(built() === 5, `axes are evicting each other: ${built()} builds, expected 5`);
 }
 
+/* ================================================================
+   5. PROBING THE FLAT LAYOUT
+   ================================================================
+   The readout has to agree with the picture, so the panel rectangles
+   the test probes inside are taken from where the renderer actually
+   drew its images — not from a second copy of the layout arithmetic.
+   If picking and drawing ever disagree about where a panel is, that is
+   exactly what this catches.
+   ================================================================ */
+inCase("flat probing");
+let probes = 0;
+{
+  const W = 470;
+  const cv = createStubCanvas(W, W);
+  installStubDocument(cv);
+  const view = volume(40, 50, 60);
+  const lx = 2.0,
+    ly = 1.4,
+    lz = 0.9;
+  const scene: SliceScene = { view, lx, ly, lz, ix: 13, iy: 31, iz: 22, interfaces: [0.3] };
+  drawSlices("cv", scene, createPlaneCache());
+  const rects = cv.images().map((o) => o.dest!);
+
+  /* Panel order is YZ, XZ, XY: which world axis each holds fixed, which runs
+     across it, and which runs down it. */
+  const panels = [
+    { fixed: 0, index: 13, h: 1, v: 2 },
+    { fixed: 1, index: 31, h: 0, v: 2 },
+    { fixed: 2, index: 22, h: 0, v: 1 },
+  ];
+  const dims = [view.nx, view.ny, view.nz];
+  const indexOf = (p: { ix: number; iy: number; iz: number }, axis: number) =>
+    axis === 0 ? p.ix : axis === 1 ? p.iy : p.iz;
+
+  panels.forEach((panel, i) => {
+    const r = rects[i];
+    let prevH = -Infinity,
+      prevV = -Infinity;
+    for (let a = 1; a < 10; a++) {
+      for (let b = 1; b < 10; b++) {
+        const px = r.x + (r.w * a) / 10;
+        const py = r.y + (r.h * b) / 10;
+        const probe = pickFlat(scene, W, W, px, py);
+        if (!probe) {
+          fail(`panel ${i}: no probe at (${px.toFixed(1)}, ${py.toFixed(1)}), inside the drawn image`);
+          continue;
+        }
+        probes++;
+        /* The panel holds one axis fixed at its own slice. */
+        expect(
+          indexOf(probe, panel.fixed) === panel.index,
+          `panel ${i}: fixed axis reads ${indexOf(probe, panel.fixed)}, expected ${panel.index}`
+        );
+        /* Indices in range, and the value the one actually stored there. */
+        const ix = probe.ix,
+          iy = probe.iy,
+          iz = probe.iz;
+        expect(
+          ix >= 0 && ix < dims[0] && iy >= 0 && iy < dims[1] && iz >= 0 && iz < dims[2],
+          `panel ${i}: indices ${ix},${iy},${iz} out of a ${dims.join("x")} grid`
+        );
+        expect(
+          probe.value === view.data[ix + iy * view.nx + iz * view.nx * view.ny],
+          `panel ${i}: value ${probe.value} is not what the volume holds at ${ix},${iy},${iz}`
+        );
+        /* Screen right and screen down must move the world position one way
+           only — a sign flip here would read the plot mirrored. */
+        const hv = [probe.x, probe.y, probe.z][panel.h];
+        const vv = [probe.x, probe.y, probe.z][panel.v];
+        if (b === 1) {
+          expect(hv > prevH, `panel ${i}: moving right did not increase its horizontal axis`);
+          prevH = hv;
+        }
+        if (a === 1) {
+          expect(vv > prevV, `panel ${i}: moving down did not increase its vertical axis`);
+          prevV = vv;
+        }
+      }
+    }
+    /* The image's own corners map to the grid's first and last voxel. */
+    const first = pickFlat(scene, W, W, r.x + 0.5, r.y + 0.5);
+    const last = pickFlat(scene, W, W, r.x + r.w - 0.5, r.y + r.h - 0.5);
+    expect(first !== null && last !== null, `panel ${i}: corners of the drawn image do not probe`);
+    if (first && last) {
+      expect(
+        indexOf(first, panel.h) === 0 && indexOf(first, panel.v) === 0,
+        `panel ${i}: top-left corner probes ${indexOf(first, panel.h)},${indexOf(first, panel.v)} not 0,0`
+      );
+      expect(
+        indexOf(last, panel.h) === dims[panel.h] - 1 && indexOf(last, panel.v) === dims[panel.v] - 1,
+        `panel ${i}: bottom-right corner probes the wrong last voxel`
+      );
+    }
+  });
+
+  /* The gutters, the margins and the empty fourth quadrant are not the plot. */
+  const outside: [number, number][] = [
+    [2, 2],
+    [W - 2, W - 2],
+    [rects[0].x - 4, rects[0].y + 10], // left margin
+    [rects[0].x + rects[0].w + 4, rects[0].y + 10], // gutter between the top panels
+    [rects[2].x + rects[2].w + 30, rects[2].y + 30], // the empty fourth quadrant
+  ];
+  outside.forEach(([px, py]) =>
+    expect(pickFlat(scene, W, W, px, py) === null, `(${px.toFixed(0)}, ${py.toFixed(0)}) probed, but is not on a panel`)
+  );
+
+  /* A canvas too small to draw on is also too small to probe. */
+  expect(pickFlat(scene, 100, 100, 50, 50) === null, "probed a canvas too small to have panels");
+}
+
 inCase("");
-finish(`flat cases=${sweptCases} label boxes checked=${boxesChecked}`);
+finish(`flat cases=${sweptCases} label boxes checked=${boxesChecked} probes=${probes}`);

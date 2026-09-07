@@ -291,6 +291,11 @@ export function buildHelp(containerId: string): void {
           double-click to return to the default angle. The <strong>Flat slices</strong> layout puts the three
           cuts side by side instead: nothing is foreshortened there, so a distance on screen is a distance in
           the tissue — the view to use when reading a depth off the plot.</li>
+        <li>Hover a plot to read the value under the cursor: the position in cm and the fluence or absorption
+          there, plus which overlay band the voxel falls in when the overlay is on. In the 3-D box this
+          follows whichever cut is nearest the camera at that point, so it reads the surface you can actually
+          see. The blue crosshairs mark where the other two cuts pass through each plane, which is what ties
+          the three views together.</li>
         <li>Tick the overlay checkbox under a plot to recolour those slices by how much to trust them
           voxel-by-voxel: for the diffusion models, how far each voxel is from breaking the approximation;
           for Monte Carlo, how converged its estimate is there. Kubelka-Munk has no such overlay.</li>

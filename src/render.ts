@@ -723,3 +723,62 @@ export function drawSlices(cvId: string, scene: SliceScene, cache: PlaneCache): 
     ctx.fillStyle = AXIS_INK;
   });
 }
+
+/* ================================================================
+   PROBING
+   ================================================================
+   What the cursor is over, so the plots can say it: a position in cm
+   and the value there. The plots were readable before this and not
+   interrogable — you could see that a region was bright without being
+   able to put a number on it, which for a simulator is most of the
+   point.
+
+   Both layouts answer through the same Probe, and both derive their
+   answer from the same layout and projection the drawing used, rather
+   than from a second copy of that arithmetic. A readout that disagrees
+   with the picture is worse than none.
+   ================================================================ */
+export interface Probe {
+  /** Position in cm, in the scene's convention (z is depth from the surface). */
+  x: number;
+  y: number;
+  z: number;
+  /** The voxel that position falls in. */
+  ix: number;
+  iy: number;
+  iz: number;
+  /** The field value there. */
+  value: number;
+  /** The overlay code there, or null when the volume carries no overlay. */
+  code: number | null;
+}
+
+/** A Probe for a position in cm, or null if it is outside the grid. */
+export function probeAt(scene: SliceScene, x: number, y: number, z: number): Probe | null {
+  const { view, lx, ly, lz } = scene;
+  const ix = Math.floor(((x + lx / 2) / lx) * view.nx);
+  const iy = Math.floor(((y + ly / 2) / ly) * view.ny);
+  const iz = Math.floor((z / lz) * view.nz);
+  if (ix < 0 || ix >= view.nx || iy < 0 || iy >= view.ny || iz < 0 || iz >= view.nz) return null;
+  const o = ix + iy * view.nx + iz * view.nx * view.ny;
+  return { x, y, z, ix, iy, iz, value: view.data[o], code: view.validity ? view.validity[o] : null };
+}
+
+/** What is under (px, py) on a flat-layout canvas of W x H, or null if that is
+    a gutter, a margin, or off the grid. */
+export function pickFlat(scene: SliceScene, W: number, H: number, px: number, py: number): Probe | null {
+  const panels = flatLayout(scene, W, H);
+  if (!panels) return null;
+  const c = sliceCenters(scene);
+  const centers = [c.x, c.y, c.z];
+  for (const p of panels) {
+    if (px < p.ox || px >= p.ox + p.w || py < p.oy || py >= p.oy + p.h) continue;
+    const { fixed, h: ha, v: va } = PANEL_AXES[p.axis];
+    const pos = [0, 0, 0];
+    pos[fixed] = centers[fixed];
+    pos[ha] = p.hRange[0] + ((px - p.ox) / p.w) * (p.hRange[1] - p.hRange[0]);
+    pos[va] = p.vRange[0] + ((py - p.oy) / p.h) * (p.vRange[1] - p.vRange[0]);
+    return probeAt(scene, pos[0], pos[1], pos[2]);
+  }
+  return null;
+}

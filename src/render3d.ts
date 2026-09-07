@@ -51,11 +51,13 @@
 
 import {
   type PlaneCache,
+  type Probe,
   type SliceAxis,
   type SliceScene,
   colormapFloor,
   niceTicks,
   planeCanvas,
+  probeAt,
   setSmoothing,
   sliceCenters,
   sliceDims,
@@ -678,4 +680,57 @@ export function drawBox3D(
     alignFor(ctx, tx, ty);
     labelAt(ctx, `${AXIS_NAMES[axis]} [cm]`, ex + tx * 12, ey + ty * 12, W, H);
   }
+}
+
+/* ================================================================
+   PROBING
+   ================================================================ */
+/** What is under (px, py) on a 3-D box of W x H, or null if the cursor is off
+    the slices. Inverts the same projection the drawing used.
+
+    The visible surface at a screen point is whichever plane's intersection
+    with the view ray is nearest the camera and still inside the box, which is
+    the whole of the hit test: the planes are full planes, so if one lies in
+    front of another there, it is the one you can see. */
+export function pick3D(
+  scene: SliceScene,
+  W: number,
+  H: number,
+  cam: Camera,
+  px: number,
+  py: number
+): Probe | null {
+  const box = bounds(scene);
+  if (!box) return null;
+  const { lo, hi } = box;
+  const pr = projector(lo, hi, cam, W, H);
+  if (!pr) return null;
+  const ctr = displayCenter(scene);
+
+  /* The basis is orthonormal, so a screen point fixes two of the three
+     coordinates of every point on its view ray: P = ar·right + au·up + t·dir.
+     Requiring P[axis] = ctr[axis] then gives t outright — and t, being the
+     component along dir, *is* the depth. */
+  const ar = (px - pr.ox) / pr.s;
+  const au = -(py - pr.oy) / pr.s;
+
+  let best: { t: number; p: V3 } | null = null;
+  for (let axis = 0; axis < 3; axis++) {
+    if (Math.abs(pr.dir[axis]) < 1e-9) continue; // edge-on: nothing to hit
+    const t = (ctr[axis] - ar * pr.right[axis] - au * pr.up[axis]) / pr.dir[axis];
+    const p: V3 = [0, 0, 0];
+    let inside = true;
+    for (let i = 0; i < 3; i++) {
+      p[i] = ar * pr.right[i] + au * pr.up[i] + t * pr.dir[i];
+      /* A hair of tolerance so the box's own faces count as hits rather than
+         a one-pixel dead border. */
+      const eps = (hi[i] - lo[i]) * 1e-9;
+      if (p[i] < lo[i] - eps || p[i] > hi[i] + eps) inside = false;
+    }
+    if (!inside) continue;
+    if (!best || t > best.t) best = { t, p };
+  }
+  if (!best) return null;
+  /* Back to the scene's convention, where depth is positive downward. */
+  return probeAt(scene, best.p[0], best.p[1], -best.p[2]);
 }

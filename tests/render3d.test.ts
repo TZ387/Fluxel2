@@ -20,7 +20,7 @@
    checked over the whole camera sphere, because "correct from this
    angle" is not the claim being made.
    ================================================================ */
-import { drawBox3D, DEFAULT_CAMERA, type Camera } from "../src/render3d";
+import { drawBox3D, pick3D, DEFAULT_CAMERA, type Camera } from "../src/render3d";
 import { makeScale, colormapLut, createPlaneCache, type VolumeView } from "../src/render";
 import {
   apply,
@@ -89,7 +89,9 @@ const PLANE = [
 let cases = 0,
   richCases = 0,
   pairs = 0,
-  samples = 0;
+  samples = 0,
+  probes = 0,
+  probeMisses = 0;
 
 function runCase(
   nx: number,
@@ -265,7 +267,79 @@ function runCase(
   pairs += overlaps;
   if (overlaps >= 6) richCases++;
 
-  /* ── 3. labels ── */
+  /* ── 3. picking ──
+     pick3D inverts this same projection, so the test of it is a round trip:
+     probe a screen point, project the world position that comes back, and it
+     has to land where the probe started. Then the harder half — that it picked
+     the *visible* plane, which is the nearest of the three whose intersection
+     with the view ray is still inside the box. A hit test that quietly returns
+     a plane hidden behind another would read out a number from a voxel the
+     user cannot see. */
+  const planeHits = (px: number, py: number): { axis: number; t: number; p: V3 }[] => {
+    const ar = (px - ox) / s,
+      au = -(py - oy) / s;
+    const hits: { axis: number; t: number; p: V3 }[] = [];
+    for (let axis = 0; axis < 3; axis++) {
+      if (Math.abs(dir[axis]) < 1e-9) continue;
+      const t = (ctr[axis] - ar * right[axis] - au * up[axis]) / dir[axis];
+      const p: V3 = [0, 0, 0];
+      let inside = true;
+      for (let i = 0; i < 3; i++) {
+        p[i] = ar * right[i] + au * up[i] + t * dir[i];
+        const eps = (hi[i] - lo[i]) * 1e-9;
+        if (p[i] < lo[i] - eps || p[i] > hi[i] + eps) inside = false;
+      }
+      if (inside) hits.push({ axis, t, p });
+    }
+    return hits;
+  };
+
+  for (let a = 1; a < 8; a++) {
+    for (let b = 1; b < 8; b++) {
+      const px = (CANVAS * a) / 8,
+        py = (CANVAS * b) / 8;
+      const probe = pick3D(scene, CANVAS, CANVAS, cam, px, py);
+      const hits = planeHits(px, py);
+      if (hits.length === 0) {
+        expect(probe === null, `probed (${px}, ${py}) where no plane is visible`);
+        probeMisses++;
+        continue;
+      }
+      if (!probe) {
+        /* The oracle sees a hit but the renderer returned nothing — allowed
+           only when that hit lands outside the voxel grid, which the box's
+           own far faces do by a rounding hair. */
+        const nearest = hits.reduce((m, h) => (h.t > m.t ? h : m));
+        const onEdge = [nearest.p[0], nearest.p[1], -nearest.p[2]].some((v, i) => {
+          const bound = [lx, ly, lz][i];
+          const at = i === 2 ? v : v + bound / 2;
+          return at <= 1e-9 || at >= bound - 1e-9;
+        });
+        expect(onEdge, `no probe at (${px}, ${py}) though plane ${nearest.axis} is visible there`);
+        probeMisses++;
+        continue;
+      }
+      probes++;
+      /* Round trip: the position that came back must project to where we asked. */
+      const back = proj([probe.x, probe.y, -probe.z]);
+      const err = Math.hypot(back.x - px, back.y - py);
+      expect(err < 1e-6, `probe at (${px}, ${py}) reprojects ${err.toExponential(2)} px away`);
+      /* It must be the nearest visible plane, not merely one of them. */
+      const nearest = hits.reduce((m, h) => (h.t > m.t ? h : m));
+      const gotDepth = dot([probe.x, probe.y, -probe.z], dir);
+      expect(
+        gotDepth >= nearest.t - 1e-9,
+        `probe at (${px}, ${py}) returned a plane ${(nearest.t - gotDepth).toExponential(2)} cm behind the visible one`
+      );
+      /* And the value must be the one the volume actually holds there. */
+      expect(
+        probe.value === data[probe.ix + probe.iy * nx + probe.iz * nx * ny],
+        `probe value ${probe.value} is not what the volume holds at ${probe.ix},${probe.iy},${probe.iz}`
+      );
+    }
+  }
+
+  /* ── 4. labels ── */
   const texts = canvas.texts().map((t) => t.text);
   ["x [cm]", "y [cm]", "z [cm]"].forEach((t) =>
     expect(texts.includes(t), `missing axis title ${t}`)
@@ -316,5 +390,8 @@ inCase("");
    thing it exists for, and that must fail rather than pass quietly. */
 expect(richCases >= 40, `only ${richCases} of ${cases} cases compared 6+ overlapping quads`);
 expect(samples >= 10000, `only ${samples} overlapping points compared`);
+expect(probes >= 2000, `only ${probes} successful probes — the hit test is barely exercised`);
 
-finish(`cases=${cases} rich=${richCases} overlapping pairs=${pairs} points compared=${samples}`);
+finish(
+  `cases=${cases} rich=${richCases} overlapping pairs=${pairs} points compared=${samples} probes=${probes} (+${probeMisses} off-slice)`
+);

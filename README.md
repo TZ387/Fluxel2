@@ -80,7 +80,10 @@ and both follow, since the point of the pairing is to read one against the other
 slices** layout puts the three cuts side by side with their own axes: nothing is foreshortened there, so a
 distance on screen is a distance in the tissue, which is the view to read a depth off. The colour scale is
 logarithmic by default and switchable to linear, the colormap is inferno by default with the original
-blue→red ramp still available, and the slice sliders step one voxel at a time but read out in cm.
+blue→red ramp still available, and the slice sliders step one voxel at a time but read out in cm. Hovering
+either plot reads out the position and the value under the cursor — in the 3-D box that means the nearest cut
+at that point, i.e. the surface actually visible — and blue crosshairs mark where the other two cuts pass
+through each plane, so the three views read as one volume rather than three pictures.
 
 The 3-D box is plain canvas 2-D, no WebGL and no dependency, which is possible because an orthographic
 projection is linear: an axis-aligned slice rectangle projects to a parallelogram, and the map from image
@@ -122,7 +125,8 @@ tasks if none is otherwise specified:
   approximations — visible *spatially*: where diffusion goes wrong, not just that it does.
 - **1-D profile plots** — fluence against depth on the beam axis (log y) and against radius at a chosen
   depth, with the Monte Carlo standard error as a band. These are what compare directly to the literature and
-  to the Beer-Lambert and diffusion asymptotes the Rust tests already check numerically.
+  to the Beer-Lambert and diffusion asymptotes the Rust tests already check numerically. The hover readout
+  answers for one point at a time; a profile is the curve through them.
 
 Cross-checking against a mature external tool ([MCX](https://mcx.space) and its OpenCL variant
 [mcxcl](https://github.com/fangq/mcxcl), MMC, mcmatlab) is still worth doing for anything load-bearing — they
