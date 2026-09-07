@@ -1,7 +1,19 @@
 import "./styles.css";
 import { MODELS, buildModelSelect, type OverlaySpec } from "./models";
 import { buildModelParams, getParams } from "./ui-params";
-import { drawSlices, drawColorbar, drawValidityLegend } from "./render";
+import {
+  COLORMAPS,
+  colormapLut,
+  createPlaneCache,
+  drawColorbar,
+  drawSlices,
+  drawValidityLegend,
+  makeScale,
+  type PlaneCache,
+  type ScaleKind,
+  type SliceScene,
+  type VolumeView,
+} from "./render";
 import { runModel } from "./compute";
 import { buildHelp } from "./help";
 
@@ -26,12 +38,11 @@ type VolumeKind = "phi" | "abs";
 interface VolumeCache {
   /** The volume as computed — a view onto the IPC buffer, never copied. */
   data: Float32Array;
-  /** Raw bounds, for the colourbar's labels. */
+  /** Raw bounds. Everything the colour ramp and its bar need follows from
+      these through render.ts's makeScale, so switching between the log and
+      linear scales is a redraw, not a recompute. */
   vmin: number;
   vmax: number;
-  /** The same bounds on the log scale the colour ramp works in. */
-  logMin: number;
-  logMax: number;
 }
 
 function buildVolumeCache(vol: Float32Array): VolumeCache {
@@ -41,20 +52,25 @@ function buildVolumeCache(vol: Float32Array): VolumeCache {
     if (vol[i] > vmax) vmax = vol[i];
     if (vol[i] < vmin) vmin = vol[i];
   }
-
-  /* Log scale for the colormap — it shows the full dynamic range from
-     near the source to far from it. A volume that never goes positive has
-     no log range to speak of, so fall back to six decades below the peak. */
-  const logMin = vmin > 0 ? Math.log10(vmin) : Math.log10(Math.max(vmax * 1e-6, 1e-30));
-  const logMax = vmax > 0 ? Math.log10(vmax) : 0;
-
-  return { data: vol, vmin, vmax, logMin, logMax };
+  return { data: vol, vmin, vmax };
 }
 
 const Simulation = {
   nx: 40,
   ny: 40,
   nz: 40,
+  /** Grid extents [cm], so the plots can be labelled in the units every
+      parameter is given in: x and y are centred on the beam axis, z runs
+      from 0 at the surface down to lz (see beam.rs). */
+  lx: 2,
+  ly: 2,
+  lz: 2,
+  /** Depths [cm] of the internal layer interfaces — cumulative thicknesses,
+      the bottom of the stack excluded. Empty for a homogeneous model. */
+  interfaces: [] as number[],
+  /** Bumped per stored result, so a redraw can tell "same volume, different
+      camera" from "new volume" — see the plane-image stamp in buildScene. */
+  runId: 0,
   phi: null as VolumeCache | null,
   abs: null as VolumeCache | null,
   /** Per-voxel overlay codes for the current run, shared by both plots
@@ -67,23 +83,32 @@ const Simulation = {
       rebuilds the panel without discarding the volume already computed. */
   overlay: null as OverlaySpec | null,
 
-  /** Store a freshly computed result and remember the grid it used. */
-  set(
-    nx: number,
-    ny: number,
-    nz: number,
-    phi: Float32Array,
-    abs: Float32Array,
-    validity: Uint8Array | null,
-    overlay: OverlaySpec | null
-  ) {
-    this.nx = nx;
-    this.ny = ny;
-    this.nz = nz;
-    this.phi = buildVolumeCache(phi);
-    this.abs = buildVolumeCache(abs);
-    this.validity = validity;
-    this.overlay = overlay;
+  /** Store a freshly computed result, and the grid and geometry it used. */
+  set(r: {
+    nx: number;
+    ny: number;
+    nz: number;
+    lx: number;
+    ly: number;
+    lz: number;
+    interfaces: number[];
+    phi: Float32Array;
+    abs: Float32Array;
+    validity: Uint8Array | null;
+    overlay: OverlaySpec | null;
+  }) {
+    this.nx = r.nx;
+    this.ny = r.ny;
+    this.nz = r.nz;
+    this.lx = r.lx;
+    this.ly = r.ly;
+    this.lz = r.lz;
+    this.interfaces = r.interfaces;
+    this.runId++;
+    this.phi = buildVolumeCache(r.phi);
+    this.abs = buildVolumeCache(r.abs);
+    this.validity = r.validity;
+    this.overlay = r.overlay;
   },
 
   /** 'phi' | 'abs' → the matching cache, or null if not yet computed. */
@@ -98,7 +123,23 @@ const Simulation = {
 
 /* ================================================================
    AXIS SLIDERS FOR EACH PLOT
+   ================================================================
+   The slider still steps in voxels — that is the resolution the
+   answer exists at — but reads out in cm, which is what the plot's
+   own axes and every parameter in the panel are quoted in. A voxel
+   index only meant anything when the plot labelled itself with one.
    ================================================================ */
+
+/** Where a slice plane sits, in cm: voxel *centres*, since that is where
+    the field was evaluated (beam.rs's sample_axisymmetric_volume). */
+function axisPosition(ax: "x" | "y" | "z", i: number): number {
+  if (ax === "x") return ((i + 0.5) * Simulation.lx) / Simulation.nx - Simulation.lx / 2;
+  if (ax === "y") return ((i + 0.5) * Simulation.ly) / Simulation.ny - Simulation.ly / 2;
+  return ((i + 0.5) * Simulation.lz) / Simulation.nz;
+}
+
+const fmtPos = (v: number) => `${v.toFixed(3)} cm`;
+
 function buildAxisSliders(containerId: string, suffix: VolumeKind): void {
   const container = document.getElementById(containerId)!;
   container.innerHTML = "";
@@ -110,13 +151,13 @@ function buildAxisSliders(containerId: string, suffix: VolumeKind): void {
     row.innerHTML = `
       <span class="axis-lbl">${ax}</span>
       <input type="range" id="s${ax}-${suffix}" min="0" max="${dim - 1}" step="1" value="${defV}">
-      <span class="axis-val" id="s${ax}-${suffix}-v">${defV}</span>`;
+      <span class="axis-val" id="s${ax}-${suffix}-v">${fmtPos(axisPosition(ax, defV))}</span>`;
     container.appendChild(row);
 
     const el = row.querySelector("input") as HTMLInputElement;
     const out = row.querySelector(".axis-val") as HTMLElement;
     el.addEventListener("input", () => {
-      out.textContent = el.value;
+      out.textContent = fmtPos(axisPosition(ax, +el.value));
       redraw(suffix);
     });
   });
@@ -141,38 +182,80 @@ function getShowValidity(suffix: VolumeKind): boolean {
   return (document.getElementById(`vchk-${suffix}`) as HTMLInputElement).checked;
 }
 
-function redraw(suffix: VolumeKind): void {
+/* ================================================================
+   VIEW CONTROLS
+   ================================================================
+   The colour scale and the colormap are shared by both plots rather
+   than duplicated per panel: fluence and absorption are read against
+   each other, and they can only be if they are drawn the same way. The
+   per-panel controls stay per-panel — the slice planes and the overlay
+   toggle are questions you ask of one field at a time.
+
+   Read straight off the controls at draw time, the same way getSlice
+   reads the sliders, so there is no second copy of the state to keep
+   in step.
+   ================================================================ */
+/** One plane-image cache per panel, so the two plots don't evict each
+    other's slices on every redraw. */
+const planeCaches: Record<VolumeKind, PlaneCache> = {
+  phi: createPlaneCache(),
+  abs: createPlaneCache(),
+};
+
+function getScaleKind(): ScaleKind {
+  return (document.getElementById("view-scale") as HTMLSelectElement).value as ScaleKind;
+}
+
+function getColormapId(): string {
+  return (document.getElementById("view-cmap") as HTMLSelectElement).value;
+}
+
+/** Everything the renderer needs for one panel, in physical units. */
+function buildScene(suffix: VolumeKind): SliceScene | null {
   const cache = Simulation.volume(suffix);
-  if (!cache) return;
+  if (!cache) return null;
+  const { nx, ny, nz } = Simulation;
+  const clamp = (v: number, n: number) => Math.max(0, Math.min(n - 1, v));
   const { ix, iy, iz } = getSlice(suffix);
   const showValidity = getShowValidity(suffix) && Simulation.validity !== null && Simulation.overlay !== null;
+  const view: VolumeView = {
+    data: cache.data,
+    nx,
+    ny,
+    nz,
+    scale: makeScale(getScaleKind(), cache.vmin, cache.vmax),
+    lut: colormapLut(getColormapId()),
+    validity: Simulation.validity,
+    showValidity,
+    /* Everything that decides a voxel's colour, and nothing that doesn't —
+       notably not the camera, which is what makes an orbit cheap. */
+    stamp: `${Simulation.runId}:${suffix}:${getScaleKind()}:${getColormapId()}:${showValidity ? 1 : 0}`,
+  };
+  return {
+    view,
+    lx: Simulation.lx,
+    ly: Simulation.ly,
+    lz: Simulation.lz,
+    ix: clamp(ix, nx),
+    iy: clamp(iy, ny),
+    iz: clamp(iz, nz),
+    interfaces: Simulation.interfaces,
+  };
+}
 
-  drawSlices(
-    `cv-${suffix}`,
-    cache.data,
-    Simulation.nx,
-    Simulation.ny,
-    Simulation.nz,
-    ix,
-    iy,
-    iz,
-    cache.logMin,
-    cache.logMax,
-    Simulation.validity,
-    showValidity
-  );
+function redraw(suffix: VolumeKind): void {
+  const scene = buildScene(suffix);
+  if (!scene) return;
+  drawSlices(`cv-${suffix}`, scene, planeCaches[suffix]);
 
-  if (showValidity) {
-    drawValidityLegend(
-      `cbar-${suffix}`,
-      `clbl-${suffix}-hi`,
-      `clbl-${suffix}-mid`,
-      `clbl-${suffix}-lo`,
-      Simulation.overlay!.legend
-    );
-  } else {
-    drawColorbar(`cbar-${suffix}`, `clbl-${suffix}-hi`, `clbl-${suffix}-mid`, `clbl-${suffix}-lo`, cache.vmin, cache.vmax);
-  }
+  if (scene.view.showValidity) drawValidityLegend(`cbar-${suffix}`, Simulation.overlay!.legend);
+  else drawColorbar(`cbar-${suffix}`, scene.view.scale, scene.view.lut);
+}
+
+function redrawAll(): void {
+  if (!Simulation.hasData()) return;
+  redraw("phi");
+  redraw("abs");
 }
 
 /* ================================================================
@@ -195,8 +278,7 @@ function syncCanvasSizes(): void {
 const canvasResizeObserver = new ResizeObserver(() => {
   if (!Simulation.hasData()) return;
   syncCanvasSizes();
-  redraw("phi");
-  redraw("abs");
+  redrawAll();
 });
 ["cv-phi", "cv-abs"].forEach((id) => canvasResizeObserver.observe(document.getElementById(id)!));
 
@@ -229,7 +311,34 @@ async function runAndRender(): Promise<void> {
   const { phi, abs, validity, derived, valid, reasons } = await runModel(model.command, p, onProgress);
   const dt = (performance.now() - t0).toFixed(1);
 
-  Simulation.set(p.nx, p.ny, p.nz, phi, abs, validity, model.overlay ?? null);
+  /* The grid's depth is an input for the one homogeneous model and a
+     derived quantity for the three layered ones, where it is the stack's
+     total thickness — so take it from `derived` when the model reports it
+     (models.ts's `Lz`) and fall back to the parameter otherwise. The
+     interfaces are the partial sums of the same thicknesses. */
+  const lz = Number.isFinite(derived?.Lz) ? (derived.Lz as number) : (p.lz as number);
+  const interfaces: number[] = [];
+  if (Array.isArray(p.layers)) {
+    let d = 0;
+    for (let i = 0; i < p.layers.length - 1; i++) {
+      d += p.layers[i].thickness;
+      interfaces.push(d);
+    }
+  }
+
+  Simulation.set({
+    nx: p.nx,
+    ny: p.ny,
+    nz: p.nz,
+    lx: p.lx,
+    ly: p.ly,
+    lz,
+    interfaces,
+    phi,
+    abs,
+    validity,
+    overlay: model.overlay ?? null,
+  });
 
   /* Show plots section */
   (document.getElementById("plots") as HTMLElement).style.display = "";
@@ -253,8 +362,7 @@ async function runAndRender(): Promise<void> {
   /* Resize canvases to match their rendered pixel width */
   syncCanvasSizes();
 
-  redraw("phi");
-  redraw("abs");
+  redrawAll();
 
   st.innerHTML = model.summaryLine(derived, dt);
 
@@ -330,6 +438,15 @@ document.getElementById("tab-btn-help")!.addEventListener("click", () => switchT
 /* ================================================================
    INIT
    ================================================================ */
+function buildViewControls(): void {
+  const cmap = document.getElementById("view-cmap") as HTMLSelectElement;
+  cmap.innerHTML = COLORMAPS.map((c) => `<option value="${c.id}">${c.label}</option>`).join("");
+  ["view-scale", "view-cmap"].forEach((id) =>
+    document.getElementById(id)!.addEventListener("change", redrawAll)
+  );
+}
+
+buildViewControls();
 buildModelSelect();
 document.getElementById("model-select")!.addEventListener("change", onModelChange);
 onModelChange();

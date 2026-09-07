@@ -39,40 +39,55 @@
         </div>
 
         <!-- ── plots ───────────────────────────────────────────────── -->
-        <div class="plots-row" id="plots" style="display: none">
-          <div class="plot-panel">
-            <div class="plot-title">Fluence &Phi; [W/cm&sup2;]</div>
-            <div class="canvas-wrap"><canvas class="main" id="cv-phi"></canvas></div>
-            <div class="axis-sliders" id="sl-phi"></div>
-            <!-- Label text and legend words come from the selected model's
-                 `overlay` (models.ts) — what the overlay grades differs by
-                 model, so it can't be written here. -->
-            <label class="validity-toggle" id="vtoggle-phi" hidden>
-              <input type="checkbox" id="vchk-phi" /> <span id="vlbl-phi"></span>
-            </label>
-            <div class="cbar-row">
-              <canvas class="cbar-canvas" id="cbar-phi" height="140"></canvas>
-              <div class="cbar-labels" id="clbl-phi">
-                <span id="clbl-phi-hi"></span>
-                <span id="clbl-phi-mid"></span>
-                <span id="clbl-phi-lo"></span>
-              </div>
+        <div id="plots" style="display: none">
+          <!-- Shared by both plots: the scale and colormap are common so that
+               fluence and absorption stay directly comparable. -->
+          <div class="panel view-panel">
+            <div class="panel-title">View</div>
+            <div class="view-row">
+              <label
+                >Colour scale
+                <select id="view-scale">
+                  <option value="log">Logarithmic</option>
+                  <option value="linear">Linear</option>
+                </select>
+              </label>
+              <label
+                >Colormap
+                <select id="view-cmap"></select>
+              </label>
             </div>
           </div>
 
-          <div class="plot-panel">
-            <div class="plot-title">Absorption A = &mu;<sub>a</sub> &middot; &Phi; [W/cm&sup3;]</div>
-            <div class="canvas-wrap"><canvas class="main" id="cv-abs"></canvas></div>
-            <div class="axis-sliders" id="sl-abs"></div>
-            <label class="validity-toggle" id="vtoggle-abs" hidden>
-              <input type="checkbox" id="vchk-abs" /> <span id="vlbl-abs"></span>
-            </label>
-            <div class="cbar-row">
-              <canvas class="cbar-canvas" id="cbar-abs" height="140"></canvas>
-              <div class="cbar-labels" id="clbl-abs">
-                <span id="clbl-abs-hi"></span>
-                <span id="clbl-abs-mid"></span>
-                <span id="clbl-abs-lo"></span>
+          <div class="plots-row">
+            <div class="plot-panel">
+              <div class="plot-title">Fluence &Phi; [W/cm&sup2;]</div>
+              <div class="canvas-wrap"><canvas class="main" id="cv-phi"></canvas></div>
+              <div class="axis-sliders" id="sl-phi"></div>
+              <!-- Label text and legend words come from the selected model's
+                   `overlay` (models.ts) — what the overlay grades differs by
+                   model, so it can't be written here. -->
+              <label class="validity-toggle" id="vtoggle-phi" hidden>
+                <input type="checkbox" id="vchk-phi" /> <span id="vlbl-phi"></span>
+              </label>
+              <div class="cbar-row">
+                <!-- Ticks and their numbers are drawn into the canvas, since how
+                     many there are and where they sit follows the scale. -->
+                <canvas class="cbar-canvas" id="cbar-phi"></canvas>
+              </div>
+            </div>
+
+            <div class="plot-panel">
+              <div class="plot-title">Absorption A = &mu;<sub>a</sub> &middot; &Phi; [W/cm&sup3;]</div>
+              <div class="canvas-wrap"><canvas class="main" id="cv-abs"></canvas></div>
+              <div class="axis-sliders" id="sl-abs"></div>
+              <label class="validity-toggle" id="vtoggle-abs" hidden>
+                <input type="checkbox" id="vchk-abs" /> <span id="vlbl-abs"></span>
+              </label>
+              <div class="cbar-row">
+                <!-- Ticks and their numbers are drawn into the canvas, since how
+                     many there are and where they sit follows the scale. -->
+                <canvas class="cbar-canvas" id="cbar-abs"></canvas>
               </div>
             </div>
           </div>
