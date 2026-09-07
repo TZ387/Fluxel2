@@ -22,7 +22,7 @@ none is otherwise specified.
   `check_validity()`, and `compute_volume()`, exposed to the frontend as a `<model>_summary`/`<model>_volume`
   Tauri command pair registered in `src-tauri/src/lib.rs`. Lives here rather than in `src/` as JS because the
   per-voxel compute loops are a genuine hot path at the grid sizes this app targets — the same reasoning
-  applies to any future compute-heavy addition (e.g. the Monte Carlo validation on Fluxel's roadmap).
+  applies to any future compute-heavy addition.
 - `src-tauri/capabilities/default.json` — permission allow-list for what the webview's JS may call natively;
   extend this when adding plugins (e.g. filesystem access for CSV/HDF5 export).
 

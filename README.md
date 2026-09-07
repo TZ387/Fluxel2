@@ -54,11 +54,13 @@ is evaluated once and reused: a 25-spot grid costs under twice a single spot, no
 Adapted from [Fluxel's own roadmap](https://github.com/TZ387/Fluxel#roadmap) — a reasonable source of next
 tasks if none is otherwise specified:
 
-- **Monte Carlo validation** — an optional MC reference run to cross-check the diffusion result. Unlike
-  upstream Fluxel (which plans this via WebAssembly), this can be plain native Rust here, since Tauri already
-  runs a Rust process
 - **Export** — download fluence/absorption volumes as CSV or HDF5
 - **Isosurface overlay** — 3D isosurface rendering on top of the slice views
+
+Deliberately not planned: **Monte Carlo validation**. Mature, GPU-parallelized MC tools already cover this ground — MCX and its OpenCL
+variant [mcxcl](https://github.com/fangq/mcxcl), MMC, mcmatlab — and none of them are practical to bundle into
+a Tauri desktop app. Cross-checking a result here means running the same optical properties through one of
+those directly, not reimplementing a slower, less-validated one in-house.
 
 ## Development
 

@@ -242,8 +242,9 @@ pub fn compute_volume(p: &Fpw1992Params, d: &Fpw1992Derived) -> (Vec<f32>, Vec<f
 /// changes character at exactly 2.
 ///
 /// This is a heuristic proxy, not a measured error — there's no reference
-/// solution in this codebase to diff against (that's what the roadmap's
-/// Monte Carlo item would be for). It's the same distance/ratio reasoning
+/// solution in this codebase to diff against (an external Monte Carlo tool
+/// like MCX or MMC would be the place to get one; see README.md's Roadmap
+/// for why one isn't built in here). It's the same distance/ratio reasoning
 /// check_validity already gives in words, just evaluated per voxel instead
 /// of once for the whole grid.
 pub fn compute_validity_volume(p: &Fpw1992Params, d: &Fpw1992Derived) -> Vec<u8> {
