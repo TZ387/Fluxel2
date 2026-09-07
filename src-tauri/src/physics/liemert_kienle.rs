@@ -603,7 +603,7 @@ pub fn compute_validity_volume(p: &LiemertKienleParams) -> Vec<u8> {
 
                 let code = if ratio < 1.0 {
                     0
-                } else if ratio < 3.0 {
+                } else if ratio < 2.0 {
                     1
                 } else {
                     2

@@ -228,11 +228,18 @@ pub fn compute_volume(p: &Fpw1992Params, d: &Fpw1992Derived) -> (Vec<f32>, Vec<f
 /// The grid's side and bottom faces aren't physical boundaries, just where
 /// this semi-infinite medium stops being rendered, so they don't count.
 ///
-/// Thresholds of 1 and 3 mean free paths match the same rule of thumb
+/// The lower threshold (1 mfp) matches the same rule of thumb
 /// liemert_kienle.rs's layer-thickness check uses ("thinner than one mfp
-/// means diffusion says nothing meaningful"): under 1 is definitely still
-/// ballistic/near-field, 3+ is comfortably diffuse, and the band between is
-/// a fade rather than a hard line.
+/// means diffusion says nothing meaningful") — under it is still
+/// ballistic/near-field, not diffuse in any meaningful sense. The upper
+/// threshold (2 mfp) is a judgment call, not a hard physical line: MC-vs-
+/// diffusion comparisons in the literature typically show local fluence
+/// errors of order 10-20% still at 1-2 mfp from a source or boundary,
+/// dropping toward a few percent past roughly 3. 2 mfp was picked as
+/// "valid" here on the basis that this overlay is a rough, qualitative
+/// check rather than a quantitative one — a 10-20%-ish error is an
+/// acceptable trade for a bigger green region — not because the physics
+/// changes character at exactly 2.
 ///
 /// This is a heuristic proxy, not a measured error — there's no reference
 /// solution in this codebase to diff against (that's what the roadmap's
@@ -275,7 +282,7 @@ pub fn compute_validity_volume(p: &Fpw1992Params, d: &Fpw1992Derived) -> Vec<u8>
                 let ratio = d_min / mfp;
                 let code = if ratio < 1.0 {
                     0
-                } else if ratio < 3.0 {
+                } else if ratio < 2.0 {
                     1
                 } else {
                     2
