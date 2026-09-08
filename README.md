@@ -12,6 +12,53 @@ browser simulator covering the diffusion-approximation part of this ground, but 
 it: the Monte Carlo model, Liemert & Kienle 2010, and the beam-shaping features described below have no Fluxel
 counterpart.
 
+## Installation
+
+### Linux (Ubuntu/Debian)
+
+Download the `.deb` or the `.AppImage` from [Releases](https://github.com/TZ387/Fluxel2/releases):
+
+- `.deb`: `sudo apt install ./fluxel2_*.deb` — resolves dependencies automatically (a plain `dpkg -i` works too,
+  but won't pull in anything missing).
+- `.AppImage`: `chmod +x fluxel2_*.AppImage`, then run it directly. No install step, no root needed, portable.
+
+Building from source instead:
+
+```bash
+sudo apt update
+sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev \
+  libayatana-appindicator3-dev librsvg2-dev
+```
+
+plus [Rust](https://rustup.rs) and [Node.js](https://nodejs.org) (LTS), then:
+
+```bash
+npm install
+npm run tauri build
+```
+
+The installers land under `src-tauri/target/release/bundle/` (`deb/`, `appimage/`).
+
+### Windows
+
+Not yet tested on real hardware — these are Tauri's own documented steps, not independently verified here.
+
+Download the `.msi` or the NSIS `.exe` from [Releases](https://github.com/TZ387/Fluxel2/releases). Both should
+run on Windows 10 (version 1803, May 2018 Update, or later — anything still receiving updates qualifies) and
+Windows 11: that's the range Tauri's WebView2 dependency requires, and it ships with Windows itself from 1803
+on, so there's normally nothing extra to install. On an older or never-updated Windows 10 that lacks it, the
+installer prompts to fetch the WebView2 runtime automatically. Building from source needs the MSVC Rust
+toolchain (`rustup default stable-msvc`), the Microsoft C++ Build Tools ("Desktop development with C++"
+workload), and Node.js. Then the same `npm install` / `npm run tauri build` as above.
+
+**The example settings files** (see [Settings files](#settings-files) below) ship inside every installer, under
+an `examples/` folder alongside wherever that install type keeps its resources: `/usr/lib/fluxel2/examples/`
+for the `.deb`, `C:\Program Files\fluxel2\examples\` for the `.msi`, `%LOCALAPPDATA%\fluxel2\examples\` for the
+default per-user `.exe` install. The `.AppImage` carries them too, but only inside its own temporary mount
+while it's running — extract it first with `--appimage-extract` to browse to them, or just grab them from this
+repo's [`examples/`](examples/) folder instead, which is simpler for that one. Either way, they're
+**Load settings…** away once you've found them.
+
 ## Models
 
 Each model is self-contained in Rust under `src-tauri/src/physics/` — its compute, validity checks, and doc
