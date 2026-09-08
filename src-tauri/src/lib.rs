@@ -145,6 +145,15 @@ fn write_text_file(path: String, contents: String) -> Result<(), String> {
     std::fs::write(&path, contents).map_err(|e| format!("{path}: {e}"))
 }
 
+/// Same shape as write_text_file, for contents that aren't valid UTF-8 — a
+/// plot's exported PNG, in particular. The frontend hands over the encoded
+/// image bytes as a plain array, so this needs no dependency beyond serde's
+/// existing Vec<u8> support.
+#[tauri::command(async)]
+fn write_binary_file(path: String, contents: Vec<u8>) -> Result<(), String> {
+    std::fs::write(&path, contents).map_err(|e| format!("{path}: {e}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -160,6 +169,7 @@ pub fn run() {
             monte_carlo_volume,
             read_text_file,
             write_text_file,
+            write_binary_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

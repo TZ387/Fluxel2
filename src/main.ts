@@ -562,6 +562,65 @@ async function loadSettings(): Promise<void> {
   showStatus(`Loaded ${name} — click Compute & visualise.`, loaded.warnings);
 }
 
+/* ================================================================
+   PLOT EXPORT
+   ================================================================
+   One PNG per panel, composed on an offscreen canvas from the plot's
+   own two canvases — the slices/box (cv-<suffix>) and its colorbar
+   (cbar-<suffix>, render.ts) — so the file matches whatever is on
+   screen (either renderer, either colour scale) and always says what
+   the colour means, which neither canvas alone does.
+
+   write_binary_file (lib.rs) is write_text_file's sibling for bytes
+   that aren't valid UTF-8; the dialog is the same plugin the settings
+   files use.
+   ================================================================ */
+const EXPORT_FILTERS = [{ name: "PNG image", extensions: ["png"] }];
+
+/** Panel background/text/font, matched by hand from styles.css's `--bg2`,
+    `--text` and `--mono` — a canvas can't read a CSS custom property. */
+function composePlotPng(suffix: VolumeKind): Promise<Blob> {
+  const mainCv = document.getElementById(`cv-${suffix}`) as HTMLCanvasElement;
+  const barCv = document.getElementById(`cbar-${suffix}`) as HTMLCanvasElement;
+  const title = mainCv.closest(".plot-panel")!.querySelector(".plot-title")!.textContent ?? "";
+
+  const pad = 16,
+    gap = 16,
+    titleH = 24;
+  const out = document.createElement("canvas");
+  out.width = pad * 2 + mainCv.width + gap + barCv.width;
+  out.height = pad * 2 + titleH + Math.max(mainCv.height, barCv.height);
+  const ctx = out.getContext("2d")!;
+
+  ctx.fillStyle = "#161b22";
+  ctx.fillRect(0, 0, out.width, out.height);
+  ctx.fillStyle = "#e6edf3";
+  ctx.font = "14px 'Cascadia Code', 'Fira Mono', 'Consolas', monospace";
+  ctx.textBaseline = "top";
+  ctx.fillText(title, pad, pad);
+
+  ctx.drawImage(mainCv, pad, pad + titleH);
+  ctx.drawImage(barCv, pad + mainCv.width + gap, pad + titleH + (mainCv.height - barCv.height) / 2);
+
+  return new Promise((resolve, reject) =>
+    out.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("could not encode PNG"))), "image/png")
+  );
+}
+
+async function exportPlot(suffix: VolumeKind): Promise<void> {
+  const model = (document.getElementById("model-select") as HTMLSelectElement).value;
+  const path = await save({
+    title: "Export plot",
+    defaultPath: `${model}-${suffix}.png`,
+    filters: EXPORT_FILTERS,
+  });
+  if (path === null) return; // dialog cancelled
+  const blob = await composePlotPng(suffix);
+  const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
+  await invoke("write_binary_file", { path, contents: bytes });
+  showStatus(`Exported to ${path}`);
+}
+
 /** Both file buttons behave the same way: a dialog that may be cancelled
     (in which case nothing happens at all), followed by work that can fail on
     something outside the app's control — an unreadable file, or one that
@@ -584,6 +643,8 @@ function bindFileButton(id: string, action: () => Promise<void>, failure: string
 
 bindFileButton("save-btn", saveSettings, "Could not save the settings");
 bindFileButton("load-btn", loadSettings, "Could not load the settings");
+bindFileButton("export-phi-btn", () => exportPlot("phi"), "Could not export the plot");
+bindFileButton("export-abs-btn", () => exportPlot("abs"), "Could not export the plot");
 
 /* ================================================================
    TABS
