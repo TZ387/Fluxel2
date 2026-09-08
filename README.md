@@ -1,5 +1,7 @@
 # Fluxel2
 
+![Fluxel2 — fluence and absorption for a Monte Carlo run, shown as a 3-D slice box](docs/screenshot.png)
+
 A Tauri desktop app (TypeScript frontend + Rust backend) for simulating light transport in biological tissue,
 targeting Linux and Windows — a schema-driven parameter UI, a 3-slice volume renderer (see Visualisation
 below), and four models: a Monte Carlo reference plus three closed-form approximations (see Models below).
