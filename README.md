@@ -12,17 +12,37 @@ browser simulator covering the diffusion-approximation part of this ground, but 
 it: the Monte Carlo model, Liemert & Kienle 2010, and the beam-shaping features described below have no Fluxel
 counterpart.
 
-## Installation
+## Install
 
-### Linux (Ubuntu/Debian)
+Go to [**Releases**](https://github.com/TZ387/Fluxel2/releases/latest) and download the file for your system.
+Nothing else is needed — Rust, Node and the build tools below are only for building from source.
 
-Download the `.deb` or the `.AppImage` from [Releases](https://github.com/TZ387/Fluxel2/releases):
+| System | Download | Then |
+| --- | --- | --- |
+| Linux | `fluxel2_<version>_amd64.AppImage` | `chmod +x fluxel2_*.AppImage` and run it. No install, no root, portable. |
+| Linux | `fluxel2_<version>_amd64.deb` | `sudo apt install ./fluxel2_*.deb` |
+| Windows | `fluxel2_<version>_x64-setup.exe` | Run it. Installs for the current user, no admin needed. |
+| Windows | `fluxel2_<version>_x64_en-US.msi` | Run it. Installs for all users, needs admin. |
 
-- `.deb`: `sudo apt install ./fluxel2_*.deb` — resolves dependencies automatically (a plain `dpkg -i` works too,
-  but won't pull in anything missing).
-- `.AppImage`: `chmod +x fluxel2_*.AppImage`, then run it directly. No install step, no root needed, portable.
+Either Linux download works on any x86-64 distribution recent enough to have GTK 3 and WebKitGTK 4.1 (Ubuntu
+22.04 and later, and equivalents); the AppImage is the one to reach for if you're not on Debian/Ubuntu or don't
+want to install anything. `sudo apt install` is preferred over `dpkg -i` for the `.deb` because it pulls in
+missing dependencies rather than just reporting them.
 
-Building from source instead:
+Both Windows installers run on Windows 10 version 1803 (May 2018) or later and on Windows 11 — that's what
+Tauri's WebView2 dependency requires, and WebView2 has shipped with Windows itself since 1803, so there's
+normally nothing extra to install. On an older or never-updated Windows 10 that lacks it, the installer offers
+to fetch it.
+
+The three worked examples are installed alongside the app, and the **Load settings…** dialog opens in that
+folder the first time you use it, so there is nothing to hunt for. See [Settings files](#settings-files).
+
+## Build from source
+
+Needs [Rust](https://rustup.rs) and [Node.js](https://nodejs.org) (LTS) on every platform, plus one set of
+platform prerequisites.
+
+On **Linux**, the system libraries Tauri builds against:
 
 ```bash
 sudo apt update
@@ -30,34 +50,19 @@ sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev
   libayatana-appindicator3-dev librsvg2-dev
 ```
 
-plus [Rust](https://rustup.rs) and [Node.js](https://nodejs.org) (LTS), then:
+On **Windows**, the MSVC toolchain: the Microsoft C++ Build Tools with the "Desktop development with C++"
+workload, then `rustup default stable-msvc`.
+
+Then, on either:
 
 ```bash
+git clone https://github.com/TZ387/Fluxel2.git
+cd Fluxel2
 npm install
-npm run tauri build
+npm run tauri build      # installers land in src-tauri/target/release/bundle/
 ```
 
-The installers land under `src-tauri/target/release/bundle/` (`deb/`, `appimage/`).
-
-### Windows
-
-Not yet tested on real hardware — these are Tauri's own documented steps, not independently verified here.
-
-Download the `.msi` or the NSIS `.exe` from [Releases](https://github.com/TZ387/Fluxel2/releases). Both should
-run on Windows 10 (version 1803, May 2018 Update, or later — anything still receiving updates qualifies) and
-Windows 11: that's the range Tauri's WebView2 dependency requires, and it ships with Windows itself from 1803
-on, so there's normally nothing extra to install. On an older or never-updated Windows 10 that lacks it, the
-installer prompts to fetch the WebView2 runtime automatically. Building from source needs the MSVC Rust
-toolchain (`rustup default stable-msvc`), the Microsoft C++ Build Tools ("Desktop development with C++"
-workload), and Node.js. Then the same `npm install` / `npm run tauri build` as above.
-
-**The example settings files** (see [Settings files](#settings-files) below) ship inside every installer, under
-an `examples/` folder alongside wherever that install type keeps its resources: `/usr/lib/fluxel2/examples/`
-for the `.deb`, `C:\Program Files\fluxel2\examples\` for the `.msi`, `%LOCALAPPDATA%\fluxel2\examples\` for the
-default per-user `.exe` install. The `.AppImage` carries them too, but only inside its own temporary mount
-while it's running — extract it first with `--appimage-extract` to browse to them, or just grab them from this
-repo's [`examples/`](examples/) folder instead, which is simpler for that one. Either way, they're
-**Load settings…** away once you've found them.
+Or `npm run tauri dev` to run it without packaging, and `npm test` for the frontend tests.
 
 ## Models
 
@@ -172,6 +177,15 @@ slider to fit it, exactly as typing that value in does. What a file does not rec
 a result rather than to its inputs: the slice-plane positions are indices into whatever grid the run used,
 and the volumes themselves are the Export item below. `src/settings.ts` owns the format and the checking, and
 is pure — `tests/settings.test.ts` covers it without a DOM.
+
+Three worked examples ship with the app — a three-layer skin stack at 1064 nm, 1320 nm and 1440 nm — and
+**Load settings…** opens in their folder the first time, so they are one click away on a fresh install.
+Afterwards the dialog remembers wherever you last picked a file instead. They are also in this repo's
+[`examples/`](examples/) folder. Their optical properties come from Salomatina et al., *Optical properties of
+normal and cancerous human skin in the visible and near-infrared spectral range*, J. Biomed. Opt. **11**(6)
+064026 (2006), Figs. 2–4; that paper reports `mua` and the *reduced* scattering coefficient `mus'`, so each
+file stores `mus` = `mus'` / (1 − g) with the g = 0.8 and n = 1.4 that the paper's own inverse Monte Carlo
+assumed for every skin layer.
 
 ## Export
 

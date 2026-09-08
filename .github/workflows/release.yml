@@ -57,6 +57,10 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: 'Fluxel2 ${{ github.ref_name }}'
           releaseBody: 'See the assets below to download and install this version.'
-          releaseDraft: true
+          # Published outright rather than left as a draft, so pushing a tag is
+          # the whole release. Both matrix jobs attach to this same release, so
+          # for the few minutes between them it is public with only the faster
+          # platform's installers on it — the trade for having no manual step.
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
