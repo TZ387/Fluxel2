@@ -621,6 +621,101 @@ async function exportPlot(suffix: VolumeKind): Promise<void> {
   showStatus(`Exported to ${path}`);
 }
 
+/* ================================================================
+   DATA EXPORT
+   ================================================================
+   One field's volume per button, as a .npy file plus a small .json
+   sidecar of what a bare array doesn't carry (the grid it was
+   evaluated on, in cm, and which field and model it is). Chosen over
+   CSV or JSON for the array itself because the grid this app allows
+   goes up to 400^3 = 64M voxels — a plain-text encoding of that is
+   hundreds of megabytes; .npy is the raw float bytes plus a short
+   header, readable with one call in Python (`numpy.load`) and Julia
+   (NPZ.jl), and needs no dependency here to write.
+
+   The array already sits in memory exactly as .npy wants it: voxel
+   (ix,iy,iz) lives at data[ix + iy*nx + iz*nx*ny] (render.ts's
+   probeAt uses the same arithmetic), which is C order for shape
+   (nz, ny, nx) — so the flat Float32Array goes into the file as-is,
+   no reordering.
+   ================================================================ */
+const DATA_FILTERS = [{ name: "NumPy array", extensions: ["npy"] }];
+
+/** A .npy v1.0 file's bytes for `data`, declared as `shape`. The data itself
+    is a view onto the same buffer, not a copy. */
+function encodeNpy(data: Float32Array, shape: readonly number[]): Uint8Array {
+  const shapeStr = `(${shape.join(", ")}${shape.length === 1 ? "," : ""})`;
+  const MAGIC_AND_VERSION = 8; // "\x93NUMPY" + 2 version bytes
+  const LEN_FIELD = 2;
+  let header = `{'descr': '<f4', 'fortran_order': False, 'shape': ${shapeStr}, }`;
+  /* Padded with spaces so the magic+version+len-field+header is a multiple
+     of 64 bytes — not required for correctness, but every real writer does
+     it, so a reader that assumes it (some do) still works. */
+  const pad = (64 - ((MAGIC_AND_VERSION + LEN_FIELD + header.length + 1) % 64)) % 64;
+  header += " ".repeat(pad) + "\n";
+  const headerBytes = new TextEncoder().encode(header);
+
+  const out = new Uint8Array(MAGIC_AND_VERSION + LEN_FIELD + headerBytes.length + data.byteLength);
+  out.set([0x93, 0x4e, 0x55, 0x4d, 0x50, 0x59, 1, 0], 0); // \x93NUMPY, version 1.0
+  new DataView(out.buffer).setUint16(MAGIC_AND_VERSION, headerBytes.length, true);
+  out.set(headerBytes, MAGIC_AND_VERSION + LEN_FIELD);
+  out.set(new Uint8Array(data.buffer, data.byteOffset, data.byteLength), MAGIC_AND_VERSION + LEN_FIELD + headerBytes.length);
+  return out;
+}
+
+/** Base64, via the browser's own encoder rather than a hand-written loop —
+    at a volume export's largest size (hundreds of MB) that is both faster
+    and safer than building one JS string a chunk at a time. */
+function bytesToBase64(bytes: Uint8Array): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve((reader.result as string).split(",", 2)[1]);
+    reader.onerror = () => reject(reader.error ?? new Error("could not encode base64"));
+    reader.readAsDataURL(new Blob([bytes]));
+  });
+}
+
+async function exportData(suffix: VolumeKind): Promise<void> {
+  const cache = Simulation.volume(suffix);
+  if (!cache) return; // button is only reachable once a run has produced one
+
+  const model = (document.getElementById("model-select") as HTMLSelectElement).value;
+  const path = await save({
+    title: "Export data",
+    defaultPath: `${model}-${suffix}.npy`,
+    filters: DATA_FILTERS,
+  });
+  if (path === null) return; // dialog cancelled
+
+  const { nx, ny, nz, lx, ly, lz, interfaces } = Simulation;
+  const base64 = await bytesToBase64(encodeNpy(cache.data, [nz, ny, nx]));
+  await invoke("write_base64_file", { path, base64 });
+
+  /* Alongside the array, not merged into one file: keeps the .npy a plain
+     array any reader can open with nothing but numpy, and the metadata
+     inspectable without one. */
+  const metaPath = `${path.replace(/\.npy$/i, "")}.json`;
+  const meta = {
+    field: suffix,
+    units: UNITS[suffix],
+    shape: [nz, ny, nx],
+    axes: ["z", "y", "x"],
+    nx,
+    ny,
+    nz,
+    lx,
+    ly,
+    lz,
+    interfaces,
+    vmin: cache.vmin,
+    vmax: cache.vmax,
+    model,
+  };
+  await invoke("write_text_file", { path: metaPath, contents: JSON.stringify(meta, null, 2) + "\n" });
+
+  showStatus(`Exported to ${path} (+ ${metaPath.split(/[/\\]/).pop()})`);
+}
+
 /** Both file buttons behave the same way: a dialog that may be cancelled
     (in which case nothing happens at all), followed by work that can fail on
     something outside the app's control — an unreadable file, or one that
@@ -645,6 +740,8 @@ bindFileButton("save-btn", saveSettings, "Could not save the settings");
 bindFileButton("load-btn", loadSettings, "Could not load the settings");
 bindFileButton("export-phi-btn", () => exportPlot("phi"), "Could not export the plot");
 bindFileButton("export-abs-btn", () => exportPlot("abs"), "Could not export the plot");
+bindFileButton("export-phi-data-btn", () => exportData("phi"), "Could not export the data");
+bindFileButton("export-abs-data-btn", () => exportData("abs"), "Could not export the data");
 
 /* ================================================================
    TABS

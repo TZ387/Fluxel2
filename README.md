@@ -124,6 +124,56 @@ a result rather than to its inputs: the slice-plane positions are indices into w
 and the volumes themselves are the Export item below. `src/settings.ts` owns the format and the checking, and
 is pure — `tests/settings.test.ts` covers it without a DOM.
 
+## Export
+
+Each plot has its own **Export plot…** and **Export data…** buttons, under that panel's slice sliders —
+per-panel rather than one button for both, since fluence and absorption are independent questions to save.
+
+**Export plot…** writes a PNG of that panel exactly as shown — whichever layout and colour scale are current —
+with its colourbar composited alongside it, so the file says what the colour means without the app open next
+to it.
+
+**Export data…** writes the underlying voxel grid instead of a picture: a `.npy` array
+(`<model>-phi.npy` / `<model>-abs.npy`) plus a `<model>-phi.json` / `<model>-abs.json` sidecar of what a bare
+array can't carry — the grid it was evaluated on (`nx`/`ny`/`nz`, `lx`/`ly`/`lz` in cm, the layer interface
+depths), which field it is and its units, and the model that produced it. `.npy` rather than CSV or plain JSON
+for the array itself: the largest grid this app allows is 400³ = 64 million voxels, where a text encoding runs
+to hundreds of megabytes and `.npy` is the raw float bytes plus a short header — readable with one call from
+either Python or Julia:
+
+```python
+import json, numpy as np
+
+phi = np.load("monteCarlo-phi.npy")       # shape (nz, ny, nx)
+meta = json.load(open("monteCarlo-phi.json"))
+
+# the x-y plane nearest z = 0.5 cm
+z = (np.arange(meta["nz"]) + 0.5) * meta["lz"] / meta["nz"]  # voxel centres
+iz = int(np.abs(z - 0.5).argmin())
+plane = phi[iz]                           # shape (ny, nx)
+```
+
+```julia
+using NPZ, JSON
+
+phi = npzread("monteCarlo-phi.npy")       # size (nz, ny, nx), 1-indexed
+meta = JSON.parsefile("monteCarlo-phi.json")
+
+# the x-y plane nearest z = 0.5 cm
+z = [(i - 0.5) * meta["lz"] / meta["nz"] for i in 1:meta["nz"]]  # voxel centres
+iz = argmin(abs.(z .- 0.5))
+plane = phi[iz, :, :]                     # size (ny, nx)
+```
+
+NPZ.jl corrects for the row-major/column-major difference itself, so `phi[iz, iy, ix]` in Julia (1-indexed) and
+`phi[iz-1, iy-1, ix-1]` in NumPy (0-indexed) are the same voxel. x and y run from −lx/2 / −ly/2 to +lx/2 / +ly/2,
+centred on the beam axis; z runs from 0 at the surface to lz. Every voxel's coordinate is its *centre*, which
+the `+ 0.5` / `i - 0.5` above account for — the same convention the sliders' own cm readout uses
+(`axisPosition` in `src/main.ts`). The array's memory order is `(nz, ny, nx)`, z slowest and x fastest
+(`src/render.ts`'s `probeAt` uses the same arithmetic the physics writes it with:
+`ix + iy*nx + iz*nx*ny`), which is exactly C order for that shape — the metadata's own `"axes": ["z", "y", "x"]`
+says so without requiring the source to be read.
+
 ## Roadmap
 
 Adapted from [Fluxel's own roadmap](https://github.com/TZ387/Fluxel#roadmap) — a reasonable source of next
@@ -140,10 +190,6 @@ tasks if none is otherwise specified:
 
   A cheaper lever first, if runs ever feel slow: tracks average some 500 collisions per photon for typical
   tissue, and a more aggressive roulette threshold trades a little variance for a lot of wall clock.
-- **Export** — write fluence/absorption volumes out as CSV or HDF5. The file plumbing this needs is already
-  in place for the settings files above (a native save dialog plus a write command in `lib.rs`); what is left
-  is the encoding, and a decision about grid sizes — a 400³ volume is 64M values, which is a 700 MB CSV and
-  the point at which HDF5 stops being the nicer option and starts being the only one.
 - **Isosurface overlay** — a true isosurface in the 3-D box: the closed shell where the field equals one
   chosen level, most usefully an absorbed-power density corresponding to a damage threshold, which answers
   "how deep and how wide is the region above it" in one shape. Marching cubes belongs in Rust next to the

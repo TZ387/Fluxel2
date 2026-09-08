@@ -317,7 +317,51 @@ export function buildHelp(containerId: string): void {
           readable and editable by hand, so loading is deliberately forgiving: anything in it that can't be
           used as written falls back to the model's default, and every such substitution is listed under the
           status line rather than left to be noticed.</li>
+        <li>Each plot has its own <strong>Export plot&hellip;</strong> and <strong>Export data&hellip;</strong>
+          buttons, under that panel's slice sliders. Export plot writes a PNG exactly as shown — whichever
+          layout and colour scale are current — with the colourbar included, so the file says what the colour
+          means on its own. Export data writes the underlying voxel grid instead of a picture, as a
+          <code>.npy</code> array plus a <code>.json</code> file of the grid it was evaluated on; see below for
+          how to read the pair back in Python or Julia.</li>
       </ol>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Reading exported data in Python or Julia</div>
+      <p><strong>Export data&hellip;</strong> (above) writes two files per click: an array —
+        <code>&lt;model&gt;-phi.npy</code> or <code>&lt;model&gt;-abs.npy</code> — and a
+        <code>&lt;model&gt;-phi.json</code> / <code>&lt;model&gt;-abs.json</code> beside it, holding what a
+        bare array can't carry: the grid the field was evaluated on (<code>nx</code>/<code>ny</code>/<code>nz</code>
+        voxels, <code>lx</code>/<code>ly</code>/<code>lz</code> in cm, the layer interface depths), which field
+        it is and its units, and the model that produced it. The array's shape is
+        <code>(nz, ny, nx)</code> — z slowest, x fastest, matching the metadata's own
+        <code>"axes": ["z", "y", "x"]</code> — chosen over CSV or plain JSON for the numbers themselves because
+        the largest grid this app allows is 400&sup3; = 64 million voxels, where a text encoding runs to
+        hundreds of megabytes and <code>.npy</code> is the raw bytes plus a short header. Both languages read
+        it with one call:</p>
+      <pre class="help-code">import json, numpy as np
+
+phi = np.load("monteCarlo-phi.npy")       # shape (nz, ny, nx)
+meta = json.load(open("monteCarlo-phi.json"))
+
+# the x-y plane nearest z = 0.5 cm
+z = (np.arange(meta["nz"]) + 0.5) * meta["lz"] / meta["nz"]  # voxel centres
+iz = int(np.abs(z - 0.5).argmin())
+plane = phi[iz]                           # shape (ny, nx)</pre>
+      <pre class="help-code">using NPZ, JSON
+
+phi = npzread("monteCarlo-phi.npy")       # size (nz, ny, nx), 1-indexed
+meta = JSON.parsefile("monteCarlo-phi.json")
+
+# the x-y plane nearest z = 0.5 cm
+z = [(i - 0.5) * meta["lz"] / meta["nz"] for i in 1:meta["nz"]]  # voxel centres
+iz = argmin(abs.(z .- 0.5))
+plane = phi[iz, :, :]                     # size (ny, nx)</pre>
+      <p class="help-eqn-note">NPZ.jl corrects for the row-major/column-major difference itself, so
+        <code>phi[iz, iy, ix]</code> in Julia (1-indexed) and <code>phi[iz-1, iy-1, ix-1]</code> in NumPy
+        (0-indexed) are the same voxel. x and y run from &minus;lx/2 / &minus;ly/2 to +lx/2 / +ly/2, centred on
+        the beam axis; z runs from 0 at the surface to lz. Every voxel's coordinate is its <em>centre</em>,
+        which the <code>+ 0.5</code> / <code>i - 0.5</code> above account for — the same convention the
+        sliders' own cm readout uses (<code>axisPosition</code> in <code>src/main.ts</code>).</p>
     </div>
     ${MODEL_HELP.map(modelSection).join("")}
   `;

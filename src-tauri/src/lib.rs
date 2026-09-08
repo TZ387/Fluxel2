@@ -148,10 +148,84 @@ fn write_text_file(path: String, contents: String) -> Result<(), String> {
 /// Same shape as write_text_file, for contents that aren't valid UTF-8 — a
 /// plot's exported PNG, in particular. The frontend hands over the encoded
 /// image bytes as a plain array, so this needs no dependency beyond serde's
-/// existing Vec<u8> support.
+/// existing Vec<u8> support. Fine at PNG sizes; see write_base64_file for why
+/// a volume export goes a different way.
 #[tauri::command(async)]
 fn write_binary_file(path: String, contents: Vec<u8>) -> Result<(), String> {
     std::fs::write(&path, contents).map_err(|e| format!("{path}: {e}"))
+}
+
+/// Standard-alphabet base64, padded or not. Hand-rolled rather than a
+/// dependency — see write_base64_file for why this exists at all.
+fn decode_base64(input: &str) -> Result<Vec<u8>, String> {
+    fn sextet(c: u8) -> Option<u8> {
+        match c {
+            b'A'..=b'Z' => Some(c - b'A'),
+            b'a'..=b'z' => Some(c - b'a' + 26),
+            b'0'..=b'9' => Some(c - b'0' + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+    let mut out = Vec::with_capacity(input.len() / 4 * 3);
+    let mut group = [0u8; 4];
+    let mut filled = 0usize;
+    let mut pad = 0usize;
+    for c in input.bytes().filter(|c| !c.is_ascii_whitespace()) {
+        if c == b'=' {
+            pad += 1;
+            filled += 1;
+        } else {
+            group[filled] = sextet(c).ok_or("invalid base64 character")?;
+            filled += 1;
+        }
+        if filled == 4 {
+            let n = (group[0] as u32) << 18 | (group[1] as u32) << 12 | (group[2] as u32) << 6 | group[3] as u32;
+            out.push((n >> 16) as u8);
+            if pad < 2 {
+                out.push((n >> 8) as u8);
+            }
+            if pad < 1 {
+                out.push(n as u8);
+            }
+            group = [0; 4];
+            filled = 0;
+        }
+    }
+    Ok(out)
+}
+
+/// write_text_file's sibling for binary payloads too large to pass
+/// efficiently as write_binary_file's JSON array of numbers — a volume
+/// export at the largest grid this app allows (400^3 voxels) is a quarter
+/// gigabyte per field, and a JSON number array costs several times that in
+/// transit. Base64 costs a third more than the raw bytes instead.
+#[tauri::command(async)]
+fn write_base64_file(path: String, base64: String) -> Result<(), String> {
+    let bytes = decode_base64(&base64).map_err(|e| format!("{path}: {e}"))?;
+    std::fs::write(&path, bytes).map_err(|e| format!("{path}: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_base64;
+
+    #[test]
+    fn decodes_padded_and_unpadded() {
+        assert_eq!(decode_base64("").unwrap(), b"");
+        assert_eq!(decode_base64("Zg==").unwrap(), b"f");
+        assert_eq!(decode_base64("Zm8=").unwrap(), b"fo");
+        assert_eq!(decode_base64("Zm9v").unwrap(), b"foo");
+        assert_eq!(decode_base64("Zm9vYg==").unwrap(), b"foob");
+        assert_eq!(decode_base64("Zm9vYmE=").unwrap(), b"fooba");
+        assert_eq!(decode_base64("Zm9vYmFy").unwrap(), b"foobar");
+    }
+
+    #[test]
+    fn rejects_bad_characters() {
+        assert!(decode_base64("not base64!").is_err());
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -170,6 +244,7 @@ pub fn run() {
             read_text_file,
             write_text_file,
             write_binary_file,
+            write_base64_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
