@@ -54,6 +54,12 @@ source of next tasks if none is otherwise specified.
   save/open pickers; reading and writing the file itself is two `std::fs` commands in `lib.rs` rather than
   `tauri-plugin-fs`, since the path always comes from a picker the user has just used and scope configuration
   is most of what that plugin would add. The same pair is what a CSV/HDF5 export would write through.
+- `examples/` is bundled into every installer by `resources` in `tauri.conf.json`, which puts it somewhere
+  install-type-specific (`/usr/lib/fluxel2/examples` for the `.deb`, the install folder on Windows, a path
+  inside the mount for an AppImage). `examples_dir` in `lib.rs` is what turns that into a path the frontend
+  can use, and `main.ts` opens the Load dialog there until the user has picked a directory of their own —
+  without which the files ship but nobody finds them. Adding an example is therefore just a file in
+  `examples/`; nothing enumerates them by name.
 
 ## Environment / commands
 

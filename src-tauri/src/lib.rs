@@ -6,6 +6,8 @@ use physics::liemert_kienle::{self, LiemertKienleDerived, LiemertKienleParams};
 use physics::monte_carlo::{self, MonteCarloDerived, MonteCarloParams};
 use serde::Serialize;
 use tauri::ipc::{Channel, Response};
+use tauri::path::BaseDirectory;
+use tauri::Manager;
 
 #[derive(Serialize)]
 struct Summary<D: Serialize> {
@@ -145,6 +147,24 @@ fn write_text_file(path: String, contents: String) -> Result<(), String> {
     std::fs::write(&path, contents).map_err(|e| format!("{path}: {e}"))
 }
 
+/// Where this install put the bundled example settings files (`resources`
+/// in tauri.conf.json). Every install type keeps them somewhere no one
+/// would think to browse to — `/usr/lib/fluxel2/examples` for the .deb,
+/// the install folder for the Windows installers, a path inside the
+/// temporary mount for an AppImage — so without this the files ship but
+/// are, in practice, unreachable from the Load dialog.
+///
+/// `None` rather than an `Err` when there's nothing there: a `npm run
+/// tauri dev` run has no bundled resources, and the answer to that is a
+/// dialog opening wherever it normally would, not a failure the user has
+/// to read. Existence is checked here rather than in the frontend because
+/// a `defaultPath` that doesn't exist leaves the dialog nowhere useful.
+#[tauri::command(async)]
+fn examples_dir(app: tauri::AppHandle) -> Option<String> {
+    let dir = app.path().resolve("examples", BaseDirectory::Resource).ok()?;
+    dir.is_dir().then(|| dir.to_string_lossy().into_owned())
+}
+
 /// Same shape as write_text_file, for contents that aren't valid UTF-8 — a
 /// plot's exported PNG, in particular. The frontend hands over the encoded
 /// image bytes as a plain array, so this needs no dependency beyond serde's
@@ -243,6 +263,7 @@ pub fn run() {
             monte_carlo_volume,
             read_text_file,
             write_text_file,
+            examples_dir,
             write_binary_file,
             write_base64_file,
         ])

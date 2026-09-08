@@ -507,6 +507,40 @@ function onModelChange(): void {
    ================================================================ */
 const SETTINGS_FILTERS = [{ name: "Fluxel settings", extensions: ["json"] }];
 
+/* The directory the user last picked a settings file in, so the next
+   dialog opens there rather than back at the OS default. Undefined until
+   they pick one, which is also what both dialogs fall back to. */
+let settingsDir: string | undefined;
+
+/* Resolved once and then remembered, `null` meaning this build has no
+   bundled examples (a dev run). Undefined only before the first look. */
+let examplesDir: string | null | undefined;
+
+async function getExamplesDir(): Promise<string | null> {
+  if (examplesDir === undefined) examplesDir = await invoke<string | null>("examples_dir");
+  return examplesDir;
+}
+
+/* Where the *Load* dialog starts before the user has picked anywhere: the
+   bundled examples, which an install puts somewhere no one would browse to
+   unprompted (see examples_dir in lib.rs), so without this they ship but
+   are in practice unreachable. Only Load starts there — that directory
+   belongs to the install (and on an AppImage is a read-only mount), so
+   pointing Save at it would only produce a permission error. */
+async function loadDialogDir(): Promise<string | undefined> {
+  return settingsDir ?? (await getExamplesDir()) ?? undefined;
+}
+
+function rememberSettingsDir(path: string): void {
+  const cut = path.lastIndexOf(path.includes("\\") ? "\\" : "/");
+  if (cut <= 0) return;
+  const dir = path.slice(0, cut);
+  /* Everywhere *but* the examples directory, for the reason above: having
+     just loaded an example is no reason to aim the next save into the
+     install tree. */
+  if (dir !== examplesDir) settingsDir = dir;
+}
+
 function getViewSettings(): ViewSettings {
   return {
     mode: getViewMode(),
@@ -529,14 +563,20 @@ function applyViewSettings(view: ViewSettings): void {
 
 async function saveSettings(): Promise<void> {
   const model = (document.getElementById("model-select") as HTMLSelectElement).value;
+  const name = `${model}-settings.json`;
   const path = await save({
     title: "Save settings",
-    defaultPath: `${model}-settings.json`,
+    /* A directory alone would leave the name blank, so the two are joined
+       — with the separator that directory is already written in, since a
+       Windows path is what a Windows dialog handed back. Without a
+       directory the bare name is what it always was. */
+    defaultPath: settingsDir ? `${settingsDir}${settingsDir.includes("\\") ? "\\" : "/"}${name}` : name,
     filters: SETTINGS_FILTERS,
   });
   if (path === null) return; // dialog cancelled
   const contents = serializeSettings(model, getParams(), getViewSettings());
   await invoke("write_text_file", { path, contents });
+  rememberSettingsDir(path);
   showStatus(`Saved to ${path}`);
 }
 
@@ -545,10 +585,12 @@ async function loadSettings(): Promise<void> {
     title: "Load settings",
     multiple: false,
     directory: false,
+    defaultPath: await loadDialogDir(),
     filters: SETTINGS_FILTERS,
   });
   if (typeof path !== "string") return; // dialog cancelled
   const loaded = parseSettings(await invoke<string>("read_text_file", { path }));
+  rememberSettingsDir(path);
 
   (document.getElementById("model-select") as HTMLSelectElement).value = loaded.model;
   rebuildPanel(loaded.params);
