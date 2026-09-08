@@ -1,0 +1,25 @@
+{
+  "app": "fluxel2-settings",
+  "format": 1,
+  "model": "monteCarlo",
+  "params": {
+    "layers": [
+      { "name": "Epidermis", "mua": 0.55, "mus": 157.27, "g": 0.89, "n": 1.43, "thickness": 0.008 },
+      { "name": "Dermis", "mua": 0.12, "mus": 81.11, "g": 0.91, "n": 1.37, "thickness": 0.2 },
+      { "name": "Subcutis", "mua": 0.17, "mus": 27.78, "g": 0.91, "n": 1.37, "thickness": 2.0 }
+    ],
+    "p0": 1.0,
+    "beam_profile": "gaussian",
+    "beam_width": 0.0125,
+    "beam_pattern": "single",
+    "pattern_count": 5,
+    "pattern_spacing": 0.2,
+    "photons_k": 100,
+    "lx": 2,
+    "ly": 2,
+    "nx": 40,
+    "ny": 40,
+    "nz": 40
+  },
+  "view": { "mode": "box3d", "scale": "log", "cmap": "inferno", "camera": { "az": -1.047, "el": 0.524 } }
+}
