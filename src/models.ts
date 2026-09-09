@@ -182,6 +182,40 @@ const DIFFUSION_OVERLAY: OverlaySpec = {
   legend: ["invalid", "marginal", "valid"],
 };
 
+/* Shared by monteCarlo and liemertKienle — the two models whose beam passes
+   through a stack of homogeneous layers. Kept as one object rather than
+   copy-pasted: monteCarlo's own defaults deliberately mirror this exactly,
+   so switching between the two compares like with like. Opens on a thin,
+   strongly scattering top layer over a weaker-scattering bulk; layers added
+   by hand start from the sliders' own defs. */
+const LAYER_PARAM_GROUP: ParamGroup = {
+  id: "layers",
+  title: "Layers (top → bottom)",
+  repeat: {
+    min: 1,
+    max: 8,
+    def: 2,
+    itemLabel: "Layer",
+    defs: [
+      { mua: 0.1, mus: 100, g: 0.9, n: 1.4, thickness: 0.3 },
+      { mua: 0.1, mus: 50, g: 0.9, n: 1.4, thickness: 1.7 },
+    ],
+  },
+  /* g and n are the same physical quantities in both models, but do more
+     work in Monte Carlo: there, g is the actual Henyey-Greenstein parameter
+     each scattering event is drawn from rather than a way of reducing
+     μ<sub>s</sub>, and every n step inside the stack is a literal
+     photon-level refraction/reflection rather than the diffusion
+     approximation's boundary condition at that interface. */
+  params: [
+    { id: "mua", label: "μ<sub>a</sub> absorption [cm⁻¹]", min: 0.01, max: 5, step: 0.001, def: 0.1, fmt: fmt3 },
+    { id: "mus", label: "μ<sub>s</sub> scattering [cm⁻¹]", min: 1, max: 300, step: 0.001, def: 100, fmt: fmt3 },
+    { id: "g", label: "g anisotropy factor", min: 0, max: 0.99, step: 0.001, def: 0.9, fmt: fmt3 },
+    { id: "n", label: "n refractive index", min: 1.0, max: 1.7, step: 0.001, def: 1.4, fmt: fmt3 },
+    { id: "thickness", label: "thickness [cm]", min: 0.01, max: 3, step: 0.001, def: 0.5, fmt: fmt3 },
+  ],
+};
+
 export interface McLayerDerived {
   musp: number;
   albedo: number;
@@ -256,33 +290,7 @@ export const MODELS: Record<string, ModelDef> = {
     },
 
     paramGroups: [
-      {
-        id: "layers",
-        title: "Layers (top → bottom)",
-        repeat: {
-          min: 1,
-          max: 8,
-          def: 2,
-          itemLabel: "Layer",
-          defs: [
-            { mua: 0.1, mus: 100, g: 0.9, n: 1.4, thickness: 0.3 },
-            { mua: 0.1, mus: 50, g: 0.9, n: 1.4, thickness: 1.7 },
-          ],
-        },
-        /* The same five per layer as Liemert-Kienle, and they mean the same
-           things — but g and n do more work here: g is the actual
-           Henyey-Greenstein parameter each scattering event is drawn from
-           rather than a way of reducing μ<sub>s</sub>, and every n step
-           inside the stack refracts and reflects light, not just the one at
-           the surface. */
-        params: [
-          { id: "mua", label: "μ<sub>a</sub> absorption [cm⁻¹]", min: 0.01, max: 5, step: 0.001, def: 0.1, fmt: fmt3 },
-          { id: "mus", label: "μ<sub>s</sub> scattering [cm⁻¹]", min: 1, max: 300, step: 0.001, def: 100, fmt: fmt3 },
-          { id: "g", label: "g anisotropy factor", min: 0, max: 0.99, step: 0.001, def: 0.9, fmt: fmt3 },
-          { id: "n", label: "n refractive index", min: 1.0, max: 1.7, step: 0.001, def: 1.4, fmt: fmt3 },
-          { id: "thickness", label: "thickness [cm]", min: 0.01, max: 3, step: 0.001, def: 0.5, fmt: fmt3 },
-        ],
-      },
+      LAYER_PARAM_GROUP,
       {
         id: "beam",
         title: "Beam, grid & photon budget",
@@ -330,31 +338,7 @@ export const MODELS: Record<string, ModelDef> = {
        has its own thickness, so the grid's depth is the stack's total depth
        (reported as L_z), same as Kubelka-Munk. */
     paramGroups: [
-      {
-        id: "layers",
-        title: "Layers (top → bottom)",
-        /* Opens on a thin, strongly scattering top layer over a
-           weaker-scattering bulk — the same default this model had when it
-           was two-layer-only. Layers added by hand start from the sliders'
-           own defs. */
-        repeat: {
-          min: 1,
-          max: 8,
-          def: 2,
-          itemLabel: "Layer",
-          defs: [
-            { mua: 0.1, mus: 100, g: 0.9, n: 1.4, thickness: 0.3 },
-            { mua: 0.1, mus: 50, g: 0.9, n: 1.4, thickness: 1.7 },
-          ],
-        },
-        params: [
-          { id: "mua", label: "μ<sub>a</sub> absorption [cm⁻¹]", min: 0.01, max: 5, step: 0.001, def: 0.1, fmt: fmt3 },
-          { id: "mus", label: "μ<sub>s</sub> scattering [cm⁻¹]", min: 1, max: 300, step: 0.001, def: 100, fmt: fmt3 },
-          { id: "g", label: "g anisotropy factor", min: 0, max: 0.99, step: 0.001, def: 0.9, fmt: fmt3 },
-          { id: "n", label: "n refractive index", min: 1.0, max: 1.7, step: 0.001, def: 1.4, fmt: fmt3 },
-          { id: "thickness", label: "thickness [cm]", min: 0.01, max: 3, step: 0.001, def: 0.5, fmt: fmt3 },
-        ],
-      },
+      LAYER_PARAM_GROUP,
       {
         id: "beam",
         title: "Beam & grid",
