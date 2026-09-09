@@ -372,10 +372,33 @@ function alignFor(ctx: CanvasRenderingContext2D, ox: number, oy: number): void {
   ctx.textBaseline = oy > 0.3 ? "top" : oy < -0.3 ? "bottom" : "middle";
 }
 
-/** Draw a label only if all of it lands on the canvas — measured, not
-    guessed from the anchor, since the anchor is an edge of the text for every
-    alignment but "center". A tick clipped in half is worse than a tick
-    missing, so this decides rather than the canvas edge does. */
+interface Box {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+/** Where `text` would land at (x, y) under the context's current font,
+    textAlign and textBaseline — the anchor is an edge of the text for every
+    alignment but "center", so this is measured rather than guessed. Shared
+    by labelAt's off-canvas check and the axis-title placement below, which
+    both need to know a label's actual footprint rather than just its anchor. */
+function textBox(ctx: CanvasRenderingContext2D, text: string, x: number, y: number): Box {
+  const w = ctx.measureText(text).width;
+  const h = parseInt(ctx.font, 10) || 11;
+  const x0 = ctx.textAlign === "left" ? x : ctx.textAlign === "right" ? x - w : x - w / 2;
+  const y0 = ctx.textBaseline === "top" ? y : ctx.textBaseline === "bottom" ? y - h : y - h / 2;
+  return { x0, y0, x1: x0 + w, y1: y0 + h };
+}
+
+function boxesOverlap(a: Box, b: Box): boolean {
+  return a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0;
+}
+
+/** Draw a label only if all of it lands on the canvas. A tick clipped in
+    half is worse than a tick missing, so this decides rather than the
+    canvas edge does. */
 function labelAt(
   ctx: CanvasRenderingContext2D,
   text: string,
@@ -384,11 +407,8 @@ function labelAt(
   W: number,
   H: number
 ): void {
-  const w = ctx.measureText(text).width;
-  const h = parseInt(ctx.font, 10) || 11;
-  const x0 = ctx.textAlign === "left" ? x : ctx.textAlign === "right" ? x - w : x - w / 2;
-  const y0 = ctx.textBaseline === "top" ? y : ctx.textBaseline === "bottom" ? y - h : y - h / 2;
-  if (x0 < 1 || x0 + w > W - 1 || y0 < 1 || y0 + h > H - 1) return;
+  const b = textBox(ctx, text, x, y);
+  if (b.x0 < 1 || b.x1 > W - 1 || b.y0 < 1 || b.y1 > H - 1) return;
   ctx.fillText(text, x, y);
 }
 
@@ -607,13 +627,18 @@ export function drawBox3D(
     const text = tickLabels(vals);
     ctx.font = TICK_FONT;
     alignFor(ctx, ox, oy);
-    vals.forEach((val, i) => {
+    /* Every tick's box, so the axis title below can check itself against
+       whichever one it ends up nearest rather than just the outermost —
+       sliding away from that one is exactly what can put it on top of the
+       next one in. */
+    const tickBoxes = vals.map((val, i) => {
       const p: V3 = [...pa];
       /* Depth grows downward, the display axis grows upward. */
       p[axis] = axis === 2 ? -val : val;
       const [px, py] = project(pr, p);
       strokeLine(ctx, px, py, px + ox * 5, py + oy * 5);
       labelAt(ctx, text[i], px + ox * 8, py + oy * 8, W, H);
+      return textBox(ctx, text[i], px + ox * 8, py + oy * 8);
     });
 
     /* Interfaces get a longer mark on the depth axis, tying the dashed
@@ -632,12 +657,23 @@ export function drawBox3D(
       ctx.restore();
     }
 
-    /* At the far end of the axis rather than out from its middle: the tick
-       labels already occupy the band from 8 px outward to their own width, so
-       a title placed perpendicular to the edge lands on top of them. Hanging
-       it off whichever end of the edge is further from the box's centre puts
-       it clear of them and reads as naming the axis it sits at the end of. */
-    ctx.font = TITLE_FONT;
+    /* Near the far end of the axis rather than out from its middle: the tick
+       labels already occupy the band from 8 px outward to their own width,
+       so a title placed perpendicular to the edge out from the middle lands
+       on top of them. Not *at* the very end either — niceTicks always puts a
+       tick exactly there, so anchoring the title at the same corner just
+       trades one collision for another.
+
+       The 12 px perpendicular push stays exactly what it always was — that
+       distance, from a point already on the box's own silhouette, is what
+       the margins (M_SIDE/M_TOP/M_BOT) are sized to hold, and every camera
+       angle has to still draw a title, so it's not a knob this loop can
+       turn. What moves instead is *where along the edge* the title sits:
+       sliding toward the other end doesn't need any more room, since it's
+       still exactly as far from the box as a tick label is. Slid just
+       enough to clear every tick's own drawn box on this edge — sliding
+       away from the outermost one can just as easily land on the next one
+       in, so all of them are checked, not just that one. */
     const ends: V3[] = [pa, pb];
     const outer = ends.reduce((best, p) => {
       const [bx, by] = project(pr, best);
@@ -646,14 +682,32 @@ export function drawBox3D(
         ? p
         : best;
     });
-    const [ex, ey] = project(pr, outer);
-    let tx = ex - ctrProj[0],
-      ty = ey - ctrProj[1];
+    const inner = outer === pa ? pb : pa;
+    const [ox2, oy2] = project(pr, outer);
+    const [ix2, iy2] = project(pr, inner);
+
+    let tx = ox2 - ctrProj[0],
+      ty = oy2 - ctrProj[1];
     const tn = Math.hypot(tx, ty) || 1;
     tx /= tn;
     ty /= tn;
+    ctx.font = TITLE_FONT;
     alignFor(ctx, tx, ty);
-    labelAt(ctx, `${AXIS_NAMES[axis]} [cm]`, ex + tx * 12, ey + ty * 12, W, H);
+    const titleText = `${AXIS_NAMES[axis]} [cm]`;
+
+    let f = 0.1;
+    let ex = ox2 + (ix2 - ox2) * f,
+      ey = oy2 + (iy2 - oy2) * f;
+    for (
+      let i = 0;
+      i < 10 && tickBoxes.some((b) => boxesOverlap(textBox(ctx, titleText, ex + tx * 12, ey + ty * 12), b));
+      i++
+    ) {
+      f = Math.min(0.49, f + 0.04);
+      ex = ox2 + (ix2 - ox2) * f;
+      ey = oy2 + (iy2 - oy2) * f;
+    }
+    labelAt(ctx, titleText, ex + tx * 12, ey + ty * 12, W, H);
   }
 }
 
