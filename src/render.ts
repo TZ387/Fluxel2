@@ -231,16 +231,18 @@ const VALIDITY_COLORS: RGB[] = [
   [63, 185, 80], // 2 valid    — --accent2
 ];
 
-/* Gutters, and anything outside the data. */
-const PANEL_BG = "#080c14";
+/* Gutters, and anything outside the data. Exported: render3d.ts shares these
+   exact values rather than redeclaring them, so the two views can't drift
+   apart on a colour that's supposed to mean the same thing in both. */
+export const PANEL_BG = "#080c14";
 const AXIS_INK = "rgba(190,205,225,0.75)";
 const GRID_INK = "rgba(120,150,185,0.35)";
 const INTERFACE_INK = "rgba(255,255,255,0.55)";
 /* styles.css's --accent, dimmed: distinct from both the axis ink and the white
    dashes the layer interfaces use. */
-const CROSSHAIR_INK = "rgba(88,166,255,0.55)";
-const TICK_FONT = "11px monospace";
-const TITLE_FONT = "bold 12px monospace";
+export const CROSSHAIR_INK = "rgba(88,166,255,0.55)";
+export const TICK_FONT = "11px monospace";
+export const TITLE_FONT = "bold 12px monospace";
 
 /* ================================================================
    SLICE PLANE IMAGES

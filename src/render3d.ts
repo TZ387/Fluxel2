@@ -46,6 +46,10 @@ import {
   type Probe,
   type SliceAxis,
   type SliceScene,
+  CROSSHAIR_INK,
+  PANEL_BG,
+  TICK_FONT,
+  TITLE_FONT,
   colormapFloor,
   niceTicks,
   planeCanvas,
@@ -79,15 +83,11 @@ export const EL_LIMIT = (85 * Math.PI) / 180;
 
 type V3 = [number, number, number];
 
-const PANEL_BG = "#080c14";
 const EDGE_INK = "rgba(120,150,185,0.45)";
 const SILHOUETTE_INK = "rgba(150,180,215,0.8)";
 const FACE_TINT = ["rgba(255,255,255,0.02)", "rgba(255,255,255,0.05)", "rgba(255,255,255,0.035)"];
 const AXIS_INK = "rgba(190,205,225,0.8)";
-const CROSSHAIR_INK = "rgba(88,166,255,0.55)";
 const INTERFACE_INK = "rgba(255,255,255,0.4)";
-const TICK_FONT = "11px monospace";
-const TITLE_FONT = "bold 12px monospace";
 
 /* Room outside the box for the ticks and the axis titles. The ticks sit 8 px
    out from an edge and the titles hang off that edge's outer end, so what has
