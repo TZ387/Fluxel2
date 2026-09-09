@@ -244,6 +244,16 @@ export const CROSSHAIR_INK = "rgba(88,166,255,0.55)";
 export const TICK_FONT = "11px monospace";
 export const TITLE_FONT = "bold 12px monospace";
 
+/** One straight stroke from (ax, ay) to (bx, by), in whatever strokeStyle/
+    lineWidth/dash the caller already set — both renderers draw a lot of
+    these (ticks, crosshairs, edges) and this is the shared shorthand. */
+export function strokeLine(ctx: CanvasRenderingContext2D, ax: number, ay: number, bx: number, by: number): void {
+  ctx.beginPath();
+  ctx.moveTo(ax, ay);
+  ctx.lineTo(bx, by);
+  ctx.stroke();
+}
+
 /* ================================================================
    SLICE PLANE IMAGES
    ================================================================
@@ -472,10 +482,7 @@ export function drawColorbar(cvId: string, scale: Scale, lut: Uint8Array): void 
     /* Clamped so the topmost and bottommost labels stay inside the canvas
        instead of being cut in half by its edge. */
     const y = Math.max(6, Math.min(CBAR_H - 6, (1 - t) * (CBAR_H - 1)));
-    ctx.beginPath();
-    ctx.moveTo(CBAR_BAR, y);
-    ctx.lineTo(CBAR_BAR + 4, y);
-    ctx.stroke();
+    strokeLine(ctx, CBAR_BAR, y, CBAR_BAR + 4, y);
     ctx.fillText(label, CBAR_BAR + 7, y);
   });
 }
@@ -632,10 +639,7 @@ export function drawSlices(cvId: string, scene: SliceScene, cache: PlaneCache): 
     const hText = tickLabels(hTicks);
     hTicks.forEach((val, i) => {
       const px = hPx(val);
-      ctx.beginPath();
-      ctx.moveTo(px, p.oy + p.h);
-      ctx.lineTo(px, p.oy + p.h + 3);
-      ctx.stroke();
+      strokeLine(ctx, px, p.oy + p.h, px, p.oy + p.h + 3);
       ctx.fillText(hText[i], px, p.oy + p.h + 5);
     });
     ctx.font = TITLE_FONT;
@@ -650,10 +654,7 @@ export function drawSlices(cvId: string, scene: SliceScene, cache: PlaneCache): 
       const vText = tickLabels(vTicks);
       vTicks.forEach((val, i) => {
         const py = vPx(val);
-        ctx.beginPath();
-        ctx.moveTo(p.ox - 3, py);
-        ctx.lineTo(p.ox, py);
-        ctx.stroke();
+        strokeLine(ctx, p.ox - 3, py, p.ox, py);
         ctx.fillText(vText[i], p.ox - 5, py);
       });
       ctx.save();
@@ -675,10 +676,7 @@ export function drawSlices(cvId: string, scene: SliceScene, cache: PlaneCache): 
       scene.interfaces.forEach((d) => {
         if (d <= 0 || d >= lz) return;
         const py = Math.round(vPx(d)) + 0.5;
-        ctx.beginPath();
-        ctx.moveTo(p.ox, py);
-        ctx.lineTo(p.ox + p.w, py);
-        ctx.stroke();
+        strokeLine(ctx, p.ox, py, p.ox + p.w, py);
       });
       ctx.restore();
     }
@@ -690,12 +688,8 @@ export function drawSlices(cvId: string, scene: SliceScene, cache: PlaneCache): 
     ctx.strokeStyle = CROSSHAIR_INK;
     ctx.lineWidth = 1;
     const cross = (px: number, py: number) => {
-      ctx.beginPath();
-      ctx.moveTo(Math.round(px) + 0.5, p.oy);
-      ctx.lineTo(Math.round(px) + 0.5, p.oy + p.h);
-      ctx.moveTo(p.ox, Math.round(py) + 0.5);
-      ctx.lineTo(p.ox + p.w, Math.round(py) + 0.5);
-      ctx.stroke();
+      strokeLine(ctx, Math.round(px) + 0.5, p.oy, Math.round(px) + 0.5, p.oy + p.h);
+      strokeLine(ctx, p.ox, Math.round(py) + 0.5, p.ox + p.w, Math.round(py) + 0.5);
     };
     cross(hPx(centers[ha]), vPx(centers[va]));
 

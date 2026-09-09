@@ -57,6 +57,7 @@ import {
   setSmoothing,
   sliceCenters,
   sliceDims,
+  strokeLine,
   tickLabels,
 } from "./render";
 
@@ -467,10 +468,7 @@ export function drawBox3D(
     if (e.kind === "front") return;
     const [ax, ay] = project(pr, corner(lo, hi, e.a));
     const [bx, by] = project(pr, corner(lo, hi, e.b));
-    ctx.beginPath();
-    ctx.moveTo(ax, ay);
-    ctx.lineTo(bx, by);
-    ctx.stroke();
+    strokeLine(ctx, ax, ay, bx, by);
   });
 
   /* ── layer interfaces, on the two vertical back walls ─────────
@@ -496,10 +494,7 @@ export function drawBox3D(
           p1[other] = hi[other];
           const [x0, y0] = project(pr, p0);
           const [x1, y1] = project(pr, p1);
-          ctx.beginPath();
-          ctx.moveTo(x0, y0);
-          ctx.lineTo(x1, y1);
-          ctx.stroke();
+          strokeLine(ctx, x0, y0, x1, y1);
         });
     });
     ctx.restore();
@@ -564,10 +559,7 @@ export function drawBox3D(
     b2[axis] = hi[axis];
     const [ax, ay] = project(pr, a);
     const [bx, by] = project(pr, b2);
-    ctx.beginPath();
-    ctx.moveTo(ax, ay);
-    ctx.lineTo(bx, by);
-    ctx.stroke();
+    strokeLine(ctx, ax, ay, bx, by);
   }
 
   /* The silhouette re-stroked over the slices, so the box keeps a crisp
@@ -578,10 +570,7 @@ export function drawBox3D(
     if (e.kind !== "silhouette") return;
     const [ax, ay] = project(pr, corner(lo, hi, e.a));
     const [bx, by] = project(pr, corner(lo, hi, e.b));
-    ctx.beginPath();
-    ctx.moveTo(ax, ay);
-    ctx.lineTo(bx, by);
-    ctx.stroke();
+    strokeLine(ctx, ax, ay, bx, by);
   });
 
   /* ── ticks ────────────────────────────────────────────────────
@@ -623,10 +612,7 @@ export function drawBox3D(
       /* Depth grows downward, the display axis grows upward. */
       p[axis] = axis === 2 ? -val : val;
       const [px, py] = project(pr, p);
-      ctx.beginPath();
-      ctx.moveTo(px, py);
-      ctx.lineTo(px + ox * 5, py + oy * 5);
-      ctx.stroke();
+      strokeLine(ctx, px, py, px + ox * 5, py + oy * 5);
       labelAt(ctx, text[i], px + ox * 8, py + oy * 8, W, H);
     });
 
@@ -641,10 +627,7 @@ export function drawBox3D(
         const p: V3 = [...pa];
         p[2] = -d;
         const [px, py] = project(pr, p);
-        ctx.beginPath();
-        ctx.moveTo(px, py);
-        ctx.lineTo(px + ox * 5, py + oy * 5);
-        ctx.stroke();
+        strokeLine(ctx, px, py, px + ox * 5, py + oy * 5);
       });
       ctx.restore();
     }
