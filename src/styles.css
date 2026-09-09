@@ -122,7 +122,10 @@ input[type=range] {
   flex: 1;
   appearance: none;
   height: 4px;
-  background: var(--bg3);
+  /* --border, not --bg3: a repeat-instance's own background *is* --bg3, which
+     left the track invisible against a layer's panel. --border reads against
+     both that and the plain --bg2 panels. */
+  background: var(--border);
   border-radius: 2px;
   outline: none;
   cursor: pointer;
