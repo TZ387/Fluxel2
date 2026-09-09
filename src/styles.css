@@ -255,13 +255,11 @@ input[type=range]:focus-visible { box-shadow: 0 0 0 3px rgba(88,166,255,0.3); }
   font-weight: 600;
 }
 
-/* The instance's editable name. Dashed like the add button below it — the
-   same "you can act on this" cue, and enough of one that the name doesn't
-   read as a plain heading, without the filled chrome of the parameter boxes
-   next to it. appearance:none for the reason the selects above set it:
-   WebKitGTK otherwise paints native widget chrome over these colours. */
+/* The instance's editable name. appearance:none for the reason the selects
+   above set it: WebKitGTK otherwise paints native widget chrome over these
+   colours. */
 .repeat-instance-hdr input.repeat-name {
-  /* Sized for a name rather than stretched across the header, which a dashed
+  /* Sized for a name rather than stretched across the header, which a
      full-width box makes look like a rule. In ch, like the parameter boxes
      above, so it fits whichever font in --mono's stack resolves. */
   flex: 0 1 auto;
@@ -275,7 +273,10 @@ input[type=range]:focus-visible { box-shadow: 0 0 0 3px rgba(88,166,255,0.3); }
   font-weight: 600;
   color: var(--text);
   background: transparent;
-  border: 1px dashed var(--text2);
+  /* var(--text2), not var(--border): the instance's own background is
+     already var(--bg3), and var(--border) is too close to it to read as a
+     box edge — this is the same grey the dashed version used, just solid. */
+  border: 1px solid var(--text2);
   border-radius: 4px;
   padding: 2px 6px;
   outline: none;
@@ -285,7 +286,6 @@ input[type=range]:focus-visible { box-shadow: 0 0 0 3px rgba(88,166,255,0.3); }
 .repeat-instance-hdr input.repeat-name::placeholder { color: var(--text2); opacity: .75; }
 .repeat-instance-hdr input.repeat-name:hover { border-color: var(--text); }
 .repeat-instance-hdr input.repeat-name:focus {
-  border-style: solid;
   border-color: var(--accent);
   color: var(--accent);
   background: var(--bg2);
