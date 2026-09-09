@@ -103,7 +103,7 @@
 //! difference is real physics, not a discrepancy.
 
 use crate::physics::beam::{self, BeamPattern, BeamProfile, Grid};
-use crate::physics::validity::require;
+use crate::physics::validity::{require, ValidityResult};
 use serde::{Deserialize, Serialize};
 
 use std::f64::consts::PI;
@@ -253,12 +253,6 @@ pub struct MonteCarloDerived {
     /// Radial bins in the (r, z) kernel grid, for a sense of what the photon
     /// budget is being spread over.
     pub n_r: usize,
-}
-
-#[derive(Serialize)]
-pub struct ValidityResult {
-    pub valid: bool,
-    pub reasons: Vec<String>,
 }
 
 /* ================================================================

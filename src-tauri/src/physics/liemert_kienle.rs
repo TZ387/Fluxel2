@@ -74,7 +74,7 @@
 use crate::physics::beam::{self, BeamPattern, BeamProfile, Grid};
 use crate::physics::bessel::{j0, j0_zero, j1};
 use crate::physics::boundary::extrapolation_length;
-use crate::physics::validity::require;
+use crate::physics::validity::{require, ValidityResult};
 use serde::{Deserialize, Serialize};
 
 /// Every layer carries its own thickness, so the grid's depth is the stack's
@@ -133,12 +133,6 @@ pub struct LiemertKienleDerived {
     pub lz: f64,
     /// How many spots the chosen beam pattern works out to.
     pub spots: usize,
-}
-
-#[derive(Serialize)]
-pub struct ValidityResult {
-    pub valid: bool,
-    pub reasons: Vec<String>,
 }
 
 /// Per-layer coefficients derived from one layer's parameters alone — shared

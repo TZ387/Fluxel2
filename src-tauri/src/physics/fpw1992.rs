@@ -5,7 +5,7 @@
 
 use crate::physics::beam::{self, BeamPattern, BeamProfile, Grid};
 use crate::physics::boundary::extrapolation_length;
-use crate::physics::validity::require;
+use crate::physics::validity::{require, ValidityResult};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
@@ -42,12 +42,6 @@ pub struct Fpw1992Derived {
     pub delta: f64, // penetration depth
     /// How many spots the chosen beam pattern works out to.
     pub spots: usize,
-}
-
-#[derive(Serialize)]
-pub struct ValidityResult {
-    pub valid: bool,
-    pub reasons: Vec<String>,
 }
 
 /// Scalar quantities derivable from the optical properties alone (O(1)) —

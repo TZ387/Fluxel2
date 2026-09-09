@@ -10,6 +10,18 @@
 //! physics warnings below them would be computed from the same broken numbers
 //! and would only add noise.
 
+use serde::Serialize;
+
+/// What check_validity returns, the same shape for every model: whether the
+/// inputs are physically usable at all, and — if not — why. Declared once
+/// here rather than per model, since the shape never varies even though what
+/// goes into `reasons` does.
+#[derive(Serialize)]
+pub struct ValidityResult {
+    pub valid: bool,
+    pub reasons: Vec<String>,
+}
+
 /// Push a reason unless `ok`. `label` names the parameter (carrying a layer
 /// prefix where a model has more than one layer), and `requirement` completes
 /// the sentence "must be ...".

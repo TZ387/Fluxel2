@@ -4,7 +4,7 @@
 //! removed — this is the single source of truth for the physics). See that
 //! file's git history for the full derivation notes behind each equation.
 
-use crate::physics::validity::require;
+use crate::physics::validity::{require, ValidityResult};
 use serde::{Deserialize, Serialize};
 
 /// Deserialized from one entry of the frontend's layer array, which also
@@ -40,12 +40,6 @@ pub struct KubelkaMunkDerived {
     pub a_total: f64,
     #[serde(rename = "Lz")]
     pub lz: f64,
-}
-
-#[derive(Serialize)]
-pub struct ValidityResult {
-    pub valid: bool,
-    pub reasons: Vec<String>,
 }
 
 struct LayerAlone {
