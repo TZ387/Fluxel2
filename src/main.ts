@@ -29,15 +29,14 @@ import { open, save } from "@tauri-apps/plugin-dialog";
    Holds the most recent computed volumes plus the grid dimensions
    they were computed on, as an object rather than loose globals.
 
-   Only the min/max is precomputed per volume — one pass, no
-   allocation. The log10 the colour ramp works in is applied per
-   drawn pixel instead (render.ts). Precomputing log10 for every
-   voxel into a second array is the better trade at Fluxel's
-   original ≤80³ grids and the wrong one at the sizes Rust made
-   practical: of a 400³ volume's 64M voxels a redraw reads about
-   half a million, so that pass did over 100x more work than needed
-   (~1.8 s per volume) and doubled peak memory (an extra 512 MB
-   across the two). Per-pixel it costs ~25 ms a redraw instead.
+   Only the min/max is precomputed per volume — the log10 the colour
+   ramp works in is applied per drawn pixel instead (render.ts).
+   Precomputing log10 for every voxel into a second array was the
+   better trade at Fluxel's original ≤80³ grids, but not at the sizes
+   Rust made practical: a 400³ volume's redraw reads about half a
+   million of its 64M voxels, so that pass did over 100x more work
+   than needed (~1.8 s per volume, plus an extra 512 MB of peak
+   memory) versus ~25 ms per redraw done per-pixel instead.
    ================================================================ */
 type VolumeKind = "phi" | "abs";
 
@@ -492,18 +491,16 @@ function onModelChange(): void {
    SETTINGS FILES
    ================================================================
    Save the parameter panel to a JSON file and load it back.
-   settings.ts owns the file's shape and the checking of one that
-   comes back; src-tauri/src/lib.rs owns the two commands that touch
-   the disk; the dialogs are the plugin's. So all that's here is the
-   wiring — and, notably, a load path that goes through the very same
-   buildModelParams the model dropdown uses, so a file can only put
-   the panel into a state it could have been put into by hand.
+   settings.ts owns the file's shape and checks one that comes back;
+   lib.rs owns the two commands that touch disk; the dialogs are the
+   plugin's — all that's here is the wiring, notably a load path
+   through the same buildModelParams the model dropdown uses, so a
+   file can only put the panel into a state it could reach by hand.
 
-   What a file remembers is the parameters, the layer names, and the
-   shared view controls. What it doesn't is anything that belongs to
-   a *result*: the slice-plane positions are indices into whatever
-   grid the run happened to use, and the volumes themselves are the
-   Export item's business, not this one's.
+   Remembered: parameters, layer names, shared view controls. Not
+   remembered: anything belonging to a *result* — slice-plane
+   positions are indices into whatever grid the run used, and the
+   volumes themselves are the Export item's business.
    ================================================================ */
 const SETTINGS_FILTERS = [{ name: "Fluxel settings", extensions: ["json"] }];
 
@@ -668,18 +665,17 @@ async function exportPlot(suffix: VolumeKind): Promise<void> {
    ================================================================
    One field's volume per button, as a .npy file plus a small .json
    sidecar of what a bare array doesn't carry (the grid it was
-   evaluated on, in cm, and which field and model it is). Chosen over
-   CSV or JSON for the array itself because the grid this app allows
-   goes up to 400^3 = 64M voxels — a plain-text encoding of that is
-   hundreds of megabytes; .npy is the raw float bytes plus a short
-   header, readable with one call in Python (`numpy.load`) and Julia
-   (NPZ.jl), and needs no dependency here to write.
+   evaluated on, in cm, and which field and model it is). .npy over
+   CSV/JSON because the grid here goes up to 400^3 = 64M voxels — a
+   plain-text encoding of that is hundreds of megabytes, while .npy is
+   the raw float bytes plus a short header, readable with one call in
+   Python (`numpy.load`) or Julia (NPZ.jl), and needs no dependency
+   here to write.
 
    The array already sits in memory exactly as .npy wants it: voxel
-   (ix,iy,iz) lives at data[ix + iy*nx + iz*nx*ny] (render.ts's
-   probeAt uses the same arithmetic), which is C order for shape
-   (nz, ny, nx) — so the flat Float32Array goes into the file as-is,
-   no reordering.
+   (ix,iy,iz) lives at data[ix + iy*nx + iz*nx*ny] (render.ts's probeAt
+   uses the same arithmetic), C order for shape (nz, ny, nx) — so the
+   flat Float32Array goes into the file as-is, no reordering.
    ================================================================ */
 const DATA_FILTERS = [{ name: "NumPy array", extensions: ["npy"] }];
 

@@ -3,49 +3,41 @@
    ================================================================
    The same three orthogonal planes render.ts lays out side by side,
    placed where they actually are: three intersecting cuts inside the
-   tissue volume, in a box with cm ticks on its outer edges. This is
-   the view that shows how the planes relate — that the bright core on
-   the XZ cut is the same core the XY cut passes through — which the
-   flat triptych can only imply.
+   tissue volume, in a box with cm ticks on its outer edges — the view
+   that shows how the planes relate (that the bright core on the XZ cut
+   is the same core the XY cut passes through), which the flat
+   triptych can only imply.
 
    Two decisions carry the whole file.
 
-   ORTHOGRAPHIC, NOT PERSPECTIVE. An orthographic projection is
-   linear, so an axis-aligned rectangle projects to a parallelogram
-   and the map from image pixels to that parallelogram is exactly an
-   affine transform — which canvas 2-D applies natively
-   (ctx.setTransform + drawImage). So a slice plane can be stamped
-   into 3-D space pixel-exactly with no shaders, no WebGL, and no
-   dependency, and the ticks and labels are drawn in the same context
-   as everything else instead of in a second canvas overlaid on a GL
-   one. It also happens to be what MATLAB's own 3-D axes do by
-   default, so the result matches the published figures this is
-   modelled on. Perspective would need each quad subdivided per
-   scanline and buys nothing here.
+   ORTHOGRAPHIC, NOT PERSPECTIVE. An orthographic projection is linear,
+   so an axis-aligned rectangle projects to a parallelogram and the map
+   from image pixels to it is exactly an affine transform, which canvas
+   2-D applies natively (ctx.setTransform + drawImage) — so a slice
+   plane stamps into 3-D space pixel-exactly with no shaders, no
+   WebGL, and no dependency. It's also what MATLAB's own 3-D axes do
+   by default, matching the published figures this is modelled on.
+   Perspective would need each quad subdivided per scanline for no
+   gain here.
 
-   OCCLUSION WITHOUT A DEPTH BUFFER. Three full planes intersect, so
-   no fixed draw order is right. Splitting each plane into its four
-   quadrants at the other two planes' positions gives 12 quads that
-   no longer interpenetrate — which is what makes any ordering
-   possible at all — and those three planes are then exactly a BSP
-   tree, whose back-to-front traversal is the order: everything on the
-   far side of the first plane, then that plane's own fragments, then
-   everything on its near side, recursively inside each half. That
+   OCCLUSION WITHOUT A DEPTH BUFFER. Three full planes intersect, so no
+   fixed draw order is right. Splitting each plane into its four
+   quadrants at the other two planes' positions gives 12 quads that no
+   longer interpenetrate, and those three planes are then exactly a
+   BSP tree whose back-to-front traversal is the order — which
    collapses to a sort key of three base-3 digits, one per plane (see
-   orderKey), and being a BSP traversal it is exact rather than a
+   orderKey), and being a BSP traversal is exact rather than a
    heuristic that usually works.
 
-   Which matters, because the obvious heuristics are not exact. Sorting
-   quads — or the octants they bound — by the depth of their centroid
-   fails as soon as the box or the slice positions are lopsided: a 0.05
-   cm film under a 6 cm window puts a large fragment's centroid nearer
-   than a small one's while the surfaces themselves order the other
-   way. Centroid depth is precisely what a painter's algorithm cannot
-   be built on, which is why BSPs exist.
+   That precision matters: sorting quads by centroid depth fails as
+   soon as the box or slice positions are lopsided — a 0.05 cm film
+   under a 6 cm window puts a large fragment's centroid nearer than a
+   small one's while the surfaces themselves order the other way.
+   That is exactly what a painter's algorithm cannot be built on.
 
    Coordinates: this file works in a display frame [X, Y, Zup] where
-   Zup = -z, so that screen-up is up and the tissue surface is the top
-   of the box. Everything crossing the API is in the scene's own
+   Zup = -z, so screen-up is up and the tissue surface is the top of
+   the box. Everything crossing the API stays in the scene's own
    convention (depth positive downward from the surface).
    ================================================================ */
 

@@ -3,19 +3,19 @@
    ================================================================
    The renderers under test draw; they return nothing. So the way to
    test them is to hand them a canvas context that records what it was
-   asked to do, run them, and check the recording — which is enough to
-   answer the questions that actually matter here: did each slice plane
-   land where the geometry says it should, was the occlusion order
-   right, does every label fit on the canvas.
+   asked to do, run them, and check the recording — enough to answer
+   what actually matters here: did each slice plane land where the
+   geometry says it should, was the occlusion order right, does every
+   label fit on the canvas.
 
-   One recorder, shared by both test files. Not three near-copies:
+   One recorder, shared by both test files, not three near-copies —
    these stubs are easy to get subtly wrong, and a wrong one invents
-   failures. The first version of this had `save`/`restore` as no-ops,
-   so a dash set inside a save/restore pair leaked and every later
-   stroke counted as dashed — a "bug" in the renderer that was a bug in
-   the stub. Anything the renderers rely on is modelled properly here:
-   the full transform matrix (so translate/rotate compose the way canvas
-   composes them), the save/restore stack, dash state, and text metrics.
+   failures. (The first version had `save`/`restore` as no-ops, so a
+   dash set inside a save/restore pair leaked and every later stroke
+   counted as dashed — a "bug" in the renderer that was really a bug
+   in the stub.) Anything the renderers rely on is modelled properly:
+   the full transform matrix, the save/restore stack, dash state, and
+   text metrics.
    ================================================================ */
 
 /** Canvas's 2x3 transform, in its own [a, b, c, d, e, f] order: maps

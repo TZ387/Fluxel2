@@ -1,31 +1,27 @@
 /* ================================================================
    GENERIC PARAMETER PANEL BUILDER
    ================================================================
-   Renders whatever `paramGroups` the selected model declares (see
-   models.ts). Knows nothing about any specific model's parameters —
-   only how to turn a group's `params` array into rows, and how to
-   repeat that for `repeat` groups (e.g. one block per tissue layer,
-   with add/remove buttons since the layer count varies, and an
-   editable name per instance so a layer can be called "Dermis"
-   rather than "Layer 2").
+   Renders whatever `paramGroups` the selected model declares (models.ts).
+   Knows nothing about any specific model's parameters — only how to turn a
+   group's `params` array into rows, and how to repeat that for `repeat`
+   groups (one block per tissue layer, with add/remove buttons and an
+   editable name per instance, e.g. "Dermis" rather than "Layer 2").
 
-   Each row renders: [min box] — slider — [max box] — [value box].
-   All three are directly editable: the value box moves the slider
-   (clamping to [min,max], or extending it if typed outside); a bound
-   box re-ranges the slider, clamping the value if needed; the slider
-   updates the value box.
+   Each row renders: [min box] — slider — [max box] — [value box], all
+   directly editable: the value box moves the slider (clamping to
+   [min,max], or extending it if typed outside); a bound box re-ranges the
+   slider, clamping the value if needed; the slider updates the value box.
 
-   The controls are the state — getParams() reads them back off the
-   DOM at run time rather than keeping a copy in step with them. The
-   one thing that can't live in the DOM is a repeat group's instance
-   list, since rebuilding it is what add/remove *do*; that is
-   `repeatState` below, refreshed from the controls before any
-   rebuild so an edit or a rename survives one.
+   The controls are the state — getParams() reads them back off the DOM at
+   run time rather than keeping a copy in step. The one thing that can't
+   live in the DOM is a repeat group's instance list, since rebuilding it
+   is what add/remove *do*; that's `repeatState` below, refreshed from the
+   controls before any rebuild so an edit or rename survives one.
 
-   buildModelParams() takes an optional seed of starting values,
-   which is how a saved settings file is restored (settings.ts) — the
-   same path the schema's own defaults take, so there is no second
-   way to write a value into this panel.
+   buildModelParams() takes an optional seed of starting values — how a
+   saved settings file is restored (settings.ts), the same path the
+   schema's own defaults take, so there is no second way to write a value
+   into this panel.
    ================================================================ */
 
 import type { ModelDef, ParamDef, ParamGroup } from "./models";

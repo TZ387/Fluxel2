@@ -2,22 +2,19 @@
    COLORMAPS
    ================================================================
    Sampled once into a lookup table per map. A slice image needs a
-   colour per voxel — up to 160 000 per plane, rebuilt on every
-   slider drag — where walking the stop list and allocating a triple
-   to hold the answer cost about ten times what a table read does.
-   1024 steps keeps the largest departure from the continuous ramp at
-   1/255: the rounding floor of the 8-bit channels it feeds.
+   colour per voxel — up to 160 000 per plane, rebuilt on every slider
+   drag — where walking the stop list per pixel costs about ten times
+   what a table read does. 1024 steps keeps the largest departure from
+   the continuous ramp at 1/255, the rounding floor of the 8-bit
+   channels it feeds.
 
-   Two maps. Inferno is the default: it is perceptually uniform (equal
-   steps in value look like equal steps in brightness, which the older
-   ramp does not manage — it invents banding at its cyan and yellow
-   turns), it survives being printed in greyscale, and it reads
-   correctly for the common forms of colour-vision deficiency. Its
-   near-black low end also does real work in the 3-D view, where it
-   lets weak fluence fade into the box interior instead of drawing a
-   hard edge around the slice planes. The original blue→red ramp is
-   kept selectable, since every screenshot taken before this existed
-   used it.
+   Two maps. Inferno is the default: perceptually uniform (the older
+   ramp bands at its cyan and yellow turns), survives greyscale
+   printing, and reads correctly for common colour-vision deficiencies.
+   Its near-black low end also does real work in the 3-D view, letting
+   weak fluence fade into the box interior instead of a hard edge. The
+   original blue→red ramp stays selectable, since screenshots taken
+   before this existed used it.
    ================================================================ */
 export type RGB = [number, number, number];
 type Stop = [number, RGB];
@@ -249,20 +246,17 @@ const TITLE_FONT = "bold 12px monospace";
    SLICE PLANE IMAGES
    ================================================================
    A slice is built at *voxel* resolution and then scaled to wherever
-   it belongs on screen, rather than sampled once per screen pixel as
-   this file used to do. Both renderers want that, but for different
-   reasons:
-
-     — the 3-D view needs an image it can hand to an affine transform
-       (see render3d.ts), which is only possible if the image is the
-       plane rather than a picture of it already in place;
-     — and point-sampling per screen pixel was wrong in both
-       directions anyway. Below the canvas resolution it showed a 20³
-       grid as visible blocks; above it, a 400³ volume was sampled at
-       roughly every other voxel, so a thin high-fluence feature could
-       be missed entirely. Scaling a voxel-resolution image interpolates
-       going up and averages coming down, and every voxel in the plane
-       contributes either way.
+   it belongs on screen, rather than sampled once per screen pixel (as
+   this file used to). Both renderers want that: the 3-D view needs an
+   image it can hand to an affine transform (render3d.ts), which only
+   works if the image is the plane itself rather than a picture of it
+   already in place; and point-sampling per screen pixel was wrong in
+   both directions anyway — below canvas resolution it showed a 20³
+   grid as visible blocks, above it a 400³ volume sampled roughly every
+   other voxel, so a thin high-fluence feature could be missed
+   entirely. Scaling a voxel-resolution image interpolates going up and
+   averages coming down, so every voxel in the plane contributes either
+   way.
 
    The three axes differ only in where the plane starts in the volume
    and how far one step along each image direction moves — so one

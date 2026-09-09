@@ -3,38 +3,34 @@
    ================================================================
    Each entry describes one theoretical model in the "Model" dropdown.
    The physics (compute + validity checks) lives in Rust, under
-   src-tauri/src/physics/ — this file owns only the UI-facing bits:
-   the parameter schema, and which Tauri command pair to invoke (see
-   src/compute.ts).
+   src-tauri/src/physics/ — this file owns only the UI-facing bits: the
+   parameter schema, and which Tauri command pair to invoke (compute.ts).
 
-   Parameters live here per-model, not in a shared list, because
-   models need genuinely different inputs, not just different
-   defaults (FPW1992 takes one set of optical properties;
-   Kubelka-Munk needs a *repeatable* set, one per layer). Keeping each
-   schema with its model lets ui-params.ts stay generic.
+   Parameters live here per-model, not in a shared list, since models
+   need genuinely different inputs, not just different defaults
+   (FPW1992 takes one set of optical properties; Kubelka-Munk needs a
+   *repeatable* set, one per layer) — keeping each schema with its
+   model lets ui-params.ts stay generic.
 
    paramGroups: array of groups, each its own panel.
      Plain group: { id, title, params: [{id,label,min,max,step,def,fmt}, ...] }
        → merges flat into getParams()'s result (p.mua, p.lx, ...).
      Repeating group: { id, title, params: [...], repeat: {min, max, def} }
-       → rendered as `def` instances with add/remove buttons (bounded
-         by min/max); comes back as an array, e.g. p.layers = [{...}, {...}].
-         `repeat.defs` optionally gives the first instances their own
-         starting values, so the stack can open non-uniform.
-         Each instance also carries an editable `name`, which comes back in
-         that array next to the params (p.layers[0].name). It is UI-only —
-         the Rust structs simply ignore it — but it is what a saved settings
-         file remembers a layer as, so "Dermis" stays "Dermis".
+       → rendered as `def` instances with add/remove buttons (bounded by
+         min/max); comes back as an array, e.g. p.layers = [{...}, {...}].
+         `repeat.defs` optionally seeds the first instances so the stack
+         can open non-uniform. Each instance also carries an editable
+         `name` next to its params (p.layers[0].name) — UI-only (Rust
+         ignores it), but what a saved settings file remembers a layer
+         as, so "Dermis" stays "Dermis".
 
    To add a model: add a Rust module under src-tauri/src/physics/ with
    derived(), check_validity(), compute_volume() (see fpw1992.rs /
    kubelka_munk.rs), register its `<name>_summary`/`<name>_volume`
-   commands in lib.rs, then add one entry below (label, command,
-   summaryLine, warningIntro, paramGroups, and optionally `overlay`
-   and `progress`). The dropdown, param panel, run handler, overlay
-   toggle and warning display all pick it up automatically. Order
-   matters in one way only: the first entry is what the dropdown
-   opens on.
+   commands in lib.rs, then add one entry below. The dropdown, param
+   panel, run handler, overlay toggle and warning display all pick it
+   up automatically — order matters only in that the first entry is
+   what the dropdown opens on.
    ================================================================ */
 
 export interface SliderParamDef {

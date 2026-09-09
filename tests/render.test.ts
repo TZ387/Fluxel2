@@ -5,17 +5,17 @@
    guard, so its margin arithmetic has to be right for every grid the
    parameter panel can produce and every canvas size the window can
    give it: tick label length follows the extents (a 0.02 cm stack
-   wants three decimals, a 6 cm window wants one) and panel size
-   follows the canvas. Two of these were wrong when first written, both
+   wants three decimals, a 6 cm window wants one), panel size follows
+   the canvas. Two of these were wrong when first written, both
    guaranteed rather than unlucky — the first and last tick of an axis
-   sit on its ends, so a margin that cannot hold half a label clips
+   sit on its ends, so a margin that can't hold half a label clips
    every time.
 
-   Also here: that the colourbar's numbers agree with the scale they
-   came from, since a bar whose labels disagree with its colours is
-   worse than no bar; and that the plane-image cache does not serve a
-   stale plane, which is what makes orbiting cheap and would be a
-   silent wrong-picture bug if it over-reached.
+   Also checked: that the colourbar's numbers agree with the scale
+   they came from (a bar whose labels disagree with its colours is
+   worse than none), and that the plane-image cache never serves a
+   stale plane, which is what makes orbiting cheap and would otherwise
+   be a silent wrong-picture bug.
    ================================================================ */
 import {
   drawSlices,

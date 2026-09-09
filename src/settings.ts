@@ -1,24 +1,22 @@
 /* ================================================================
    SETTINGS FILES (SAVE / LOAD)
    ================================================================
-   One run's inputs, as JSON on disk. The format is deliberately not
-   a new one: `params` is verbatim the object ui-params.ts's
-   getParams() produces and compute.ts hands to Rust, so a saved file
-   is literally what was computed, and there is no second
-   serialisation to keep in step with the four models' schemas. It
-   costs one field the physics doesn't read (each layer's `name`,
-   which serde drops) and buys a file that is readable, diffable, and
-   editable by hand.
+   One run's inputs, as JSON on disk. Deliberately not a new format:
+   `params` is verbatim the object ui-params.ts's getParams() produces
+   and compute.ts hands to Rust, so a saved file is literally what was
+   computed, with no second serialisation to keep in step with the
+   four models' schemas. Costs one field the physics doesn't read
+   (each layer's `name`, which serde drops), buys a file that's
+   readable, diffable, and editable by hand.
 
-   The whole of the I/O is elsewhere: main.ts owns the file dialogs
-   and the two Tauri commands that read and write the text (see
-   src-tauri/src/lib.rs). This module is pure — a shape, a
-   serialiser, and a parser that checks a file against the selected
-   model's schema — which is what makes the part with the actual
-   decisions in it testable (tests/settings.test.ts) without a DOM.
+   The I/O itself is elsewhere: main.ts owns the file dialogs and the
+   two Tauri commands that read/write the text (lib.rs). This module
+   is pure — a shape, a serialiser, and a parser that checks a file
+   against the selected model's schema — which is what makes the part
+   with the actual decisions testable (tests/settings.test.ts) without
+   a DOM.
 
-   Loading rules, all of them chosen so that a hand-edited or older
-   file still opens:
+   Loading rules, all chosen so a hand-edited or older file still opens:
      - the model must be one this build knows; anything else is an
        error, since its parameters would mean nothing here.
      - a missing or unusable parameter falls back to the schema's

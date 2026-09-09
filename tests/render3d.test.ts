@@ -4,21 +4,21 @@
    Checks render3d.ts against an oracle that derives the same geometry
    independently — its own camera basis from the az/el angles, its own
    projection, its own plane positions — so a mistake in the renderer
-   cannot cancel out against the test. Three questions:
+   can't cancel out against the test. Three questions:
 
      1. does each plane image land on that plane's projected rectangle;
      2. wherever two drawn quads overlap on screen, is the one drawn
         later genuinely the nearer one;
      3. does every tick and title actually get drawn (the renderer
-        drops a label that would not fit, so a margin too tight shows
-        up as a missing label, not a clipped one).
+        drops a label that wouldn't fit, so a margin too tight shows up
+        as a missing label, not a clipped one).
 
-   Question 2 is the point of the file. The occlusion order is the one
-   piece of this that is easy to get wrong and hard to see: the first
-   version sorted by centroid depth, which looks right at the default
-   angle and is wrong the moment the extents are lopsided. It is
-   checked over the whole camera sphere, because "correct from this
-   angle" is not the claim being made.
+   Question 2 is the point of the file: occlusion order is the one
+   piece that's easy to get wrong and hard to see. The first version
+   sorted by centroid depth, which looks right at the default angle
+   and is wrong the moment the extents are lopsided — so this checks
+   over the whole camera sphere, since "correct from this angle" isn't
+   the claim being made.
    ================================================================ */
 import { drawBox3D, pick3D, DEFAULT_CAMERA, type Camera } from "../src/render3d";
 import { makeScale, colormapLut, createPlaneCache, type VolumeView } from "../src/render";
