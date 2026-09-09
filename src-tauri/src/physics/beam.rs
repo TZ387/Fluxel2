@@ -174,6 +174,22 @@ impl BeamPattern {
     }
 }
 
+/// Squared distance from grid position (x, y) to the pattern's nearest spot —
+/// what fpw1992.rs's and liemert_kienle.rs's per-voxel validity overlays both
+/// need (see spots() above), pulled out once so the two can't drift apart.
+/// (xs, ys) is the grid's half-width, i.e. spots() is relative to the centre
+/// but x/y are measured from the corner.
+pub fn min_rho2_to_spots(x: f64, y: f64, xs: f64, ys: f64, spots: &[(f64, f64)]) -> f64 {
+    spots
+        .iter()
+        .map(|&(sx, sy)| {
+            let rx = x - (xs + sx);
+            let ry = y - (ys + sy);
+            rx * rx + ry * ry
+        })
+        .fold(f64::INFINITY, f64::min)
+}
+
 /// The largest distance from any spot to any corner of the grid's footprint —
 /// how far out the axisymmetric kernel has to be evaluated, and (for
 /// liemert_kienle.rs) how far out its artificial cylinder wall has to sit.

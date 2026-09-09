@@ -36,3 +36,18 @@ pub fn require(reasons: &mut Vec<String>, ok: bool, label: &str, requirement: &s
         label, value, requirement
     ));
 }
+
+/// Overlay code (0 invalid, 1 marginal, 2 valid) from a distance-to-nearest-
+/// boundary / mean-free-path ratio — not a check_validity() input check like
+/// the rest of this file, but the same 1/2-mfp heuristic fpw1992.rs's and
+/// liemert_kienle.rs's compute_validity_volume both use for their per-voxel
+/// overlays (see either's doc comment for why those thresholds).
+pub fn mfp_ratio_code(ratio: f64) -> u8 {
+    if ratio < 1.0 {
+        0
+    } else if ratio < 2.0 {
+        1
+    } else {
+        2
+    }
+}

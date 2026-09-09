@@ -71,7 +71,7 @@
 use crate::physics::beam::{self, BeamPattern, BeamProfile, Grid};
 use crate::physics::bessel::{j0, j0_zero, j1};
 use crate::physics::boundary::extrapolation_length;
-use crate::physics::validity::{require, ValidityResult};
+use crate::physics::validity::{mfp_ratio_code, require, ValidityResult};
 use serde::{Deserialize, Serialize};
 
 /// Every layer carries its own thickness, so the grid's depth is the stack's
@@ -576,14 +576,7 @@ pub fn compute_validity_volume(p: &LiemertKienleParams) -> Vec<u8> {
         for iy in 0..p.ny {
             let y = (iy as f64 + 0.5) * dy;
 
-            let rho2_min = spots
-                .iter()
-                .map(|&(sx, sy)| {
-                    let rx = x - (xs + sx);
-                    let ry = y - (ys + sy);
-                    rx * rx + ry * ry
-                })
-                .fold(f64::INFINITY, f64::min);
+            let rho2_min = beam::min_rho2_to_spots(x, y, xs, ys, spots);
 
             for iz in 0..p.nz {
                 let z = (iz as f64 + 0.5) * dz;
@@ -592,15 +585,7 @@ pub fn compute_validity_volume(p: &LiemertKienleParams) -> Vec<u8> {
 
                 let d_source = (rho2_min + (z - stack.z0) * (z - stack.z0)).sqrt();
                 let d_boundary = (z - layer.z_top).min(layer.z_top + layer.thickness - z);
-                let ratio = d_source.min(d_boundary) / mfp;
-
-                let code = if ratio < 1.0 {
-                    0
-                } else if ratio < 2.0 {
-                    1
-                } else {
-                    2
-                };
+                let code = mfp_ratio_code(d_source.min(d_boundary) / mfp);
                 codes[ix + iy * p.nx + iz * p.nx * p.ny] = code;
             }
         }

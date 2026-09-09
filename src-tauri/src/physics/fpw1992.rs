@@ -5,7 +5,7 @@
 
 use crate::physics::beam::{self, BeamPattern, BeamProfile, Grid};
 use crate::physics::boundary::extrapolation_length;
-use crate::physics::validity::{require, ValidityResult};
+use crate::physics::validity::{mfp_ratio_code, require, ValidityResult};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
@@ -253,27 +253,13 @@ pub fn compute_validity_volume(p: &Fpw1992Params, d: &Fpw1992Derived) -> Vec<u8>
 
             // Nearest spot's source, laterally — z varies per voxel below,
             // but the (x, y) column is shared by every z in it.
-            let rho2_min = spots
-                .iter()
-                .map(|&(sx, sy)| {
-                    let rx = x - (xs + sx);
-                    let ry = y - (ys + sy);
-                    rx * rx + ry * ry
-                })
-                .fold(f64::INFINITY, f64::min);
+            let rho2_min = beam::min_rho2_to_spots(x, y, xs, ys, spots);
 
             for iz in 0..p.nz {
                 let z = (iz as f64 + 0.5) * dz;
                 let d_source = (rho2_min + (z - z0) * (z - z0)).sqrt();
                 let d_min = d_source.min(z); // z doubles as depth below the top surface
-                let ratio = d_min / mfp;
-                let code = if ratio < 1.0 {
-                    0
-                } else if ratio < 2.0 {
-                    1
-                } else {
-                    2
-                };
+                let code = mfp_ratio_code(d_min / mfp);
                 codes[ix + iy * p.nx + iz * p.nx * p.ny] = code;
             }
         }
