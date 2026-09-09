@@ -213,34 +213,26 @@ pub fn compute_volume(p: &Fpw1992Params, d: &Fpw1992Derived) -> (Vec<f32>, Vec<f
 }
 
 /// Per-voxel diffusion-validity code for the "show validity" overlay: 0 =
-/// invalid, 1 = marginal, 2 = valid. check_validity above renders one verdict
-/// for the whole run; this instead scores each voxel by how many transport
-/// mean free paths it sits from the nearest thing that breaks diffusion
-/// theory's isotropy assumption — the nearest spot's real source point (light
-/// hasn't scattered enough yet to be near-isotropic), or the true air-tissue
-/// interface at z = 0 (where the extrapolated-boundary condition is roughest).
-/// The grid's side and bottom faces aren't physical boundaries, just where
-/// this semi-infinite medium stops being rendered, so they don't count.
+/// invalid, 1 = marginal, 2 = valid. check_validity above renders one
+/// verdict for the whole run; this scores each voxel by how many transport
+/// mean free paths it sits from the nearest thing that breaks diffusion's
+/// isotropy assumption — the nearest spot's real source point, or the true
+/// air-tissue interface at z = 0. The grid's side and bottom faces aren't
+/// physical boundaries, just where the semi-infinite medium stops being
+/// rendered, so they don't count.
 ///
-/// The lower threshold (1 mfp) matches the same rule of thumb
-/// liemert_kienle.rs's layer-thickness check uses ("thinner than one mfp
-/// means diffusion says nothing meaningful") — under it is still
-/// ballistic/near-field, not diffuse in any meaningful sense. The upper
-/// threshold (2 mfp) is a judgment call, not a hard physical line: MC-vs-
-/// diffusion comparisons in the literature typically show local fluence
-/// errors of order 10-20% still at 1-2 mfp from a source or boundary,
-/// dropping toward a few percent past roughly 3. 2 mfp was picked as
-/// "valid" here on the basis that this overlay is a rough, qualitative
-/// check rather than a quantitative one — a 10-20%-ish error is an
-/// acceptable trade for a bigger green region — not because the physics
-/// changes character at exactly 2.
+/// The lower threshold (1 mfp) matches liemert_kienle.rs's layer-thickness
+/// rule of thumb: under it is still ballistic/near-field, not diffuse in
+/// any meaningful sense. The upper threshold (2 mfp) is a judgment call —
+/// MC-vs-diffusion comparisons in the literature show local fluence errors
+/// of order 10-20% still at 1-2 mfp, dropping toward a few percent past
+/// roughly 3, and 2 mfp was picked as "valid" on the basis that a rough,
+/// qualitative overlay can accept that trade for a bigger green region.
 ///
-/// This is a heuristic proxy, not a measured error — there's no reference
-/// solution in this codebase to diff against (an external Monte Carlo tool
-/// like MCX or MMC would be the place to get one; see README.md's Roadmap
-/// for why one isn't built in here). It's the same distance/ratio reasoning
-/// check_validity already gives in words, just evaluated per voxel instead
-/// of once for the whole grid.
+/// A heuristic proxy, not a measured error — there's no reference solution
+/// in this codebase to diff against (README.md's Roadmap). Same
+/// distance/ratio reasoning check_validity gives in words, evaluated per
+/// voxel instead of once for the whole grid.
 pub fn compute_validity_volume(p: &Fpw1992Params, d: &Fpw1992Derived) -> Vec<u8> {
     let mfp = 1.0 / (p.mua + d.musp);
     let z0 = mfp; // the real source's depth, same quantity compute_volume calls z0

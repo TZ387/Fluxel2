@@ -31,13 +31,12 @@
 //! source (a useful sanity check on the algebra).
 //!
 //! Where the beam is *aimed* is separate from its shape: a BeamPattern is a
-//! list of spot positions on the top face — one spot, a row laid down by a
-//! scanner, or the array a fractional handpiece delivers. Diffusion is
-//! linear, so a pattern's fluence is the sum of its spots', each carrying an
-//! equal share of P0. Since Phi_pt is the same function for every spot, only
-//! shifted, the expensive part (Liemert-Kienle's series, FPW1992's
-//! convolution) is still evaluated exactly once — a pattern only costs extra
-//! table lookups per voxel, not extra kernel evaluations.
+//! list of spot positions on the top face — one spot, a scanner's line, or
+//! a fractional handpiece's grid. A pattern's fluence is the linear sum of
+//! its spots', each carrying an equal share of P0; since Phi_pt is the same
+//! function for every spot, only shifted, the expensive part (the series,
+//! the convolution) is still evaluated exactly once — a pattern only costs
+//! extra table lookups per voxel, not extra kernel evaluations.
 
 use crate::physics::bessel::j1;
 

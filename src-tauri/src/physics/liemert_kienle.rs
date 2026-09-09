@@ -5,14 +5,13 @@
 //! FPW1992 gives a point source but only one layer; Kubelka-Munk gives many
 //! layers but only diffuse illumination. This fills the gap: a pencil beam
 //! through a stack of homogeneous layers, still within the diffusion
-//! approximation — no Monte Carlo involved.
+//! approximation.
 //!
 //! Solved for a *finite cylinder* of radius `a` via a Fourier-Bessel series
 //! (zeros of J0), since layering breaks the translational symmetry FPW1992's
-//! closed form relies on. The cylinder's axis runs through the beam at the
-//! center of the grid's top face; `a` is picked generously larger than the
-//! visible grid so its wall stays invisible in the display, but not so large
-//! that convergence needs many more terms (see `cylinder_radius`).
+//! closed form relies on. `a` sits generously larger than the visible grid
+//! so its wall stays invisible in the display, but not so large that
+//! convergence needs many more terms (see `cylinder_radius`).
 //!
 //! # How it's solved
 //!
@@ -54,18 +53,16 @@
 //!
 //! # Provenance
 //!
-//! N=2 was faithfully ported from the paper's own reference implementation
+//! N=2 was ported from the paper's own reference implementation
 //! (github.com/heltonmc/LightPropagation.jl, `_green_Nlaycylin_top`/`_bottom`
 //! specialized to N=2) — exactly the kind of Bessel-series math where a
 //! transcription error silently yields a plausible wrong number. That
 //! reference has no middle-layer Green's function, so the recursion above is
-//! derived here instead; it is algebraically identical to the ported form at
-//! N=2 (whose β/γ is coth(α₂(t₂+zb₂)), one step of the recursion), which the
-//! tests check term by term alongside an independent finite-volume solve.
-//! One deliberate deviation from the reference: the air-tissue boundary uses
-//! the Groenhuis fit in boundary.rs — shared with fpw1992.rs — rather than the
-//! reference's own, equally standard one, so both point-source models treat
-//! that boundary identically.
+//! derived here instead, and checked against the ported N=2 form term by
+//! term (tests), alongside an independent finite-volume solve. One
+//! deliberate deviation: the air-tissue boundary uses the Groenhuis fit in
+//! boundary.rs — shared with fpw1992.rs — rather than the reference's own,
+//! so both point-source models treat that boundary identically.
 //!
 //! The stack is bounded by air at *both* ends — the last layer's floor is a
 //! zero-fluence boundary too, so make it several penetration depths thick for
@@ -550,21 +547,18 @@ pub fn compute_volume(p: &LiemertKienleParams) -> (Vec<f32>, Vec<f32>) {
 /// Per-voxel diffusion-validity code for the "show validity" overlay — same
 /// idea as fpw1992.rs's compute_validity_volume (0 invalid, 1 marginal, 2
 /// valid), generalized to a layered stack. Each voxel is scored by how many
-/// of *its own layer's* transport mean free paths it sits from the nearest
+/// of its own layer's transport mean free paths it sits from the nearest
 /// thing that breaks diffusion's isotropy assumption: the nearest spot's
 /// real source point (always in layer 1, at depth z0), or the nearest
-/// physical interface bounding its own layer. Unlike FPW1992's single
-/// semi-infinite medium, that now includes every internal layer boundary and
-/// the stack's floor, not just the top surface — this model's doc comment:
-/// "bounded by air at *both* ends". The grid's side faces still aren't
-/// physical boundaries, just the artificial cylinder's invisible wall, so
-/// they don't count.
+/// physical interface bounding its own layer — every internal boundary and
+/// the stack's floor count here, not just the top surface (this model is
+/// bounded by air at both ends); the grid's side faces don't, being only
+/// the artificial cylinder's invisible wall.
 ///
 /// A voxel in a layer thinner than one of its own mean free paths comes out
-/// invalid here automatically: the nearest-boundary distance can be at most
-/// half that layer's thickness, already under the 1-mfp threshold — the same
-/// conclusion check_validity's separate thin-layer check reaches, with no
-/// special case needed for it.
+/// invalid automatically here — the nearest-boundary distance is at most
+/// half that layer's thickness, already under the 1-mfp threshold — matching
+/// check_validity's separate thin-layer check with no special case needed.
 pub fn compute_validity_volume(p: &LiemertKienleParams) -> Vec<u8> {
     let pattern = BeamPattern::from_params(&p.beam_pattern, p.pattern_count, p.pattern_spacing);
     let stack = Stack::new(p, &pattern);

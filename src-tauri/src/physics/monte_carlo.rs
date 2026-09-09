@@ -3,104 +3,62 @@
 //!
 //! The other three models solve an approximate transport equation in closed
 //! form (diffusion, or two-flux). This one solves the radiative transfer
-//! equation itself, by tracing individual photon packets and letting the
-//! statistics of many tracks stand in for the answer: no requirement that
+//! equation itself by tracing individual photon packets and letting the
+//! statistics of many tracks stand in for the answer — no requirement that
 //! scattering dominate absorption, no minimum layer thickness, no
-//! extrapolated-boundary trick. What it costs instead is time and noise —
-//! see the noise overlay below, which is this model's analogue of the other
-//! models' validity overlay.
+//! extrapolated-boundary trick. What it costs instead is time and noise (see
+//! the noise overlay below).
 //!
 //! # Provenance
 //!
-//! Written from the published algorithm, not ported from any existing code.
-//! The scheme is MCML's (Wang, Jacques & Zheng, "MCML — Monte Carlo
-//! modelling of light transport in multi-layered tissues", Comput. Methods
-//! Programs Biomed. 47(2), 131–146, 1995): launch, hop by an exponentially
-//! sampled step, split the step at a layer interface, deposit weight at each
-//! collision, scatter by Henyey-Greenstein, and roulette the survivors.
-//! Every formula below is standard and cited at its use site; the RNG is
-//! xoshiro256++ with splitmix64 seeding (Blackman & Vigna, public domain),
-//! also written from its published description. Nothing here derives from
-//! MCX/µMCX or from any GPL-licensed Monte Carlo source, so this file
-//! imposes no license obligation on the rest of the app.
+//! Written from the published algorithm, not ported from existing code: MCML
+//! (Wang, Jacques & Zheng, Comput. Methods Programs Biomed. 47(2), 1995) for
+//! the transport scheme — launch, exponentially-sampled hops split at layer
+//! interfaces, Henyey-Greenstein scattering, roulette on the survivors — and
+//! xoshiro256++/splitmix64 (Blackman & Vigna, public domain) for the RNG.
+//! Nothing here derives from MCX/µMCX or any GPL-licensed source, so this
+//! file imposes no license obligation on the rest of the app.
 //!
 //! # Why an (r, z) grid rather than 3-D voxels
 //!
-//! Every geometry this model accepts is axisymmetric about the beam axis:
-//! flat parallel layers, normal incidence, and a radially symmetric beam
-//! profile. So the fluence a *single* spot produces depends only on (r, z),
-//! and it is enough to score photons into an (r, z) grid — Phi(r, z) is
-//! exactly the axisymmetric kernel beam::sample_axisymmetric_volume already
-//! consumes for the two diffusion models. Consequences:
-//!
-//! - Every photon contributes to the same 2-D table rather than being spread
-//!   over a 3-D one, so a run needs orders of magnitude fewer photons than a
-//!   voxel-based Monte Carlo would for the same noise.
-//! - A beam *pattern* (a scanner's line, a fractional handpiece's grid) is
-//!   free: one run's kernel is shifted and superposed per spot, exactly as
-//!   for Liemert-Kienle. Transport is linear, so that is exact — the same
-//!   argument beam.rs's doc comment makes.
-//! - The beam *profile* is free too, and better than a convolution: instead
-//!   of convolving a pencil-beam kernel afterwards, each photon's launch
-//!   point is sampled from the profile itself (launch_radius below), which
-//!   is exact for any profile and costs nothing.
-//!
-//! The assumption to keep in mind is the one that buys all of this: tilt the
-//! incidence, warp an interface, or embed an inclusion, and the symmetry is
-//! gone and a full 3-D grid becomes necessary. Nothing outside this file
-//! depends on the choice.
+//! Every geometry this model accepts is axisymmetric about the beam axis, so
+//! a single spot's fluence depends only on (r, z) — the same kernel shape
+//! beam::sample_axisymmetric_volume already consumes for the diffusion
+//! models. That buys three things: a run needs orders of magnitude fewer
+//! photons than a voxel-based Monte Carlo for the same noise; a beam
+//! *pattern* is free (shift and superpose one kernel per spot, exact because
+//! transport is linear); and the beam *profile* is free and exact too, since
+//! each photon's launch point is drawn straight from it (launch_radius)
+//! rather than convolved in afterwards. The assumption this rests on: tilt
+//! the incidence, warp an interface, or embed an inclusion, and the symmetry
+//! is gone and a full 3-D grid becomes necessary.
 //!
 //! # Noise, and the overlay
 //!
 //! A Monte Carlo answer is an estimate with an error bar, so this model
-//! reports the error bar too. The photon budget is split into equal batches
-//! (N_BATCHES) and each batch tallied separately; the spread between batch
-//! totals is an unbiased estimate of the variance of their sum (the standard
-//! "batch means" estimator). That gives a per-bin standard error alongside
-//! the fluence, which becomes the per-voxel overlay: green where the
-//! relative standard error is under REL_SE_GOOD, amber under REL_SE_POOR,
-//! red beyond it.
-//!
-//! Worth knowing what that overlay actually shows, because it is not what
-//! intuition suggests: the noisiest bins are the ones *on the beam axis*.
-//! A radial bin's volume grows with its index (it is an annulus), so the
-//! innermost bins are by far the smallest and collect the fewest collisions
-//! even though the fluence there is the highest — the estimator's error
-//! goes with the collision count, not with the signal. The far outskirts
-//! are the other weak spot, for the opposite reason. Everything between
-//! them converges first.
+//! reports one: the photon budget splits into equal batches (N_BATCHES),
+//! each tallied separately, and the spread between batch totals is the
+//! standard "batch means" estimate of variance. That becomes the per-voxel
+//! overlay (green/amber/red on REL_SE_GOOD/REL_SE_POOR). Counter-intuitively,
+//! the noisiest bins are on the beam axis: a radial bin's volume grows with
+//! its index, so the innermost bins are smallest and collect the fewest
+//! collisions even though the fluence there is highest.
 //!
 //! # Parallelism
 //!
-//! Those batches are also the unit of parallel work, which is the second job
-//! the same decomposition does. A batch seeds its own generator from its own
-//! index and fills its own tally, so batches share nothing writable: run_mc
-//! hands each worker a contiguous run of them, and the only synchronization
-//! in the whole model is one relaxed counter feeding the progress readout.
-//! No locks, no atomic accumulation, no false sharing — which is why this
-//! scales close to linearly with cores, and why the answer doesn't depend on
-//! how many there are (the split is fixed and the reduction ordered; see
-//! run_mc).
-//!
-//! The same property is what would make a GPU port tractable, if there is
-//! ever a card worth targeting: the (r, z) tally is small enough to sit in a
-//! workgroup's shared memory, so a workgroup could keep a private tally the
-//! way a worker does here and only reduce globally at the end.
+//! Batches are also the unit of parallel work: each seeds its own generator
+//! and fills its own tally, so batches share nothing writable and there is
+//! no locking or atomic accumulation — run_mc just hands each worker a
+//! contiguous run of them, which is why this scales close to linearly with
+//! cores and the answer doesn't depend on how many there are.
 //!
 //! # Units and normalization
 //!
-//! A photon packet is launched with weight 1 and the specular reflection at
-//! the surface is deducted immediately, so the tallies are fractions of the
-//! *incident* power P0. The estimator scored at each collision is w/mu_t,
-//! the collision estimator's unbiased stand-in for the packet's path length
-//! in the bin; dividing the total by (photons * bin volume) turns it into
-//! fluence per unit incident power [1/cm^2], which is what
-//! sample_axisymmetric_volume expects and multiplies by P0.
-//!
-//! Note that the diffusion models here launch their source with full weight
-//! and never account for specular reflection, so their absolute fluence runs
-//! a few percent high next to this model's (2.8% for n = 1.4). The
-//! difference is real physics, not a discrepancy.
+//! A packet launches with weight 1, with specular reflection deducted
+//! immediately, so tallies are fractions of incident power P0. Note the
+//! diffusion models here launch at full weight and never deduct specular
+//! reflection, so their absolute fluence runs a few percent high next to
+//! this model's (2.8% for n = 1.4) — real physics, not a discrepancy.
 
 use crate::physics::beam::{self, BeamPattern, BeamProfile, Grid};
 use crate::physics::validity::{require, ValidityResult};
@@ -124,22 +82,15 @@ const N_OUTSIDE: f64 = 1.0;
 const W_MIN: f64 = 1e-4;
 const ROULETTE_CHANCE: f64 = 0.1;
 
-/// Batches the photon budget is split into. This is one number doing two
-/// jobs: it is the sample size of the batch-means error estimate, and it is
-/// the unit of parallel work (see run_mc).
-///
-/// 64 is generous for the first job — the variance of the batch total is
-/// itself pinned down to about 9% — and the second is what argues against
-/// leaving it at 16: batches are handed out in contiguous runs, so the
-/// slowest worker sets the wall time, and with only two batches each on an
-/// 8-thread machine an unlucky pair costs real time. 64 keeps that tail
-/// under a couple of percent for any core count up to 64, and divides
-/// evenly enough not to strand a worker on machines whose core count isn't
-/// a power of two.
-///
-/// Fixed rather than derived from the core count, deliberately: it decides
-/// which photons get traced, so tying it to the hardware would make the
-/// same parameters give different answers on different machines.
+/// Batches the photon budget is split into — doing two jobs at once: the
+/// sample size of the batch-means error estimate, and the unit of parallel
+/// work (see run_mc). 64 keeps both the estimator's variance and the
+/// load-imbalance tail (batches are handed out in contiguous runs, so an
+/// unlucky pair costs real time on a busy machine) small up to a 64-core
+/// machine, without stranding a worker on odd core counts. Fixed rather
+/// than derived from the core count, since it decides which photons get
+/// traced — tying it to hardware would make identical parameters give
+/// different answers on different machines.
 const N_BATCHES: usize = 64;
 
 /// Workers every test in this file runs with — see compute_volume_with for
@@ -157,20 +108,14 @@ const PROGRESS_POLL: Duration = Duration::from_millis(40);
 const REL_SE_GOOD: f64 = 0.05;
 const REL_SE_POOR: f64 = 0.20;
 
-/// Ceiling on the (r, z) tally's bin count, purely so a run can never ask
-/// for an unbounded allocation. Two things can push the radial reach up and
-/// the bin width down at once — a wide beam pattern and a small, finely
-/// divided grid — and nothing stops a value typed into the parameter panel
-/// (which re-ranges its slider rather than clamping) from combining them
-/// absurdly, or from being zero. Hitting this coarsens the radial grid,
-/// which only affects the far field; check_validity complains about a reach
-/// like that long before it gets here.
-///
-/// Worth a thought when changing it: every worker allocates three tallies of
-/// its own (see trace_batches), so the ceiling is paid per core — 2M bins is
-/// 48 MB a worker, which is the same order as the voxel volumes this app
-/// already builds at its largest grids, and only reachable by a
-/// configuration it already warns about.
+/// Ceiling on the (r, z) tally's bin count, so a run can never ask for an
+/// unbounded allocation — a wide beam pattern and a small, finely divided
+/// grid can push the radial reach up and the bin width down at once, and
+/// nothing clamps what's typed into the parameter panel. Hitting this only
+/// coarsens the far field; check_validity warns about a reach like that
+/// well before it gets here. Costed per worker (each allocates its own
+/// tally, see trace_batches): 2M bins is 48 MB, the same order as this
+/// app's largest voxel volumes.
 const MAX_TALLY_BINS: usize = 2_000_000;
 
 /// Cosine above which a direction counts as exactly along z, where the
@@ -1100,16 +1045,12 @@ fn compute_volume_with(
 }
 
 /// Per-voxel noise code for the overlay (0 poor, 1 marginal, 2 good) — this
-/// model's counterpart to the other two point-source models'
-/// compute_validity_volume, answering "how much of this voxel is signal"
-/// rather than "is diffusion justified here".
-///
-/// A voxel's value is the sum over spots of the kernel at each spot's
-/// distance, so its variance is the sum of theirs (each spot draws on a
-/// different part of the kernel, so treating the terms as independent is
-/// reasonable), each scaled by the same per-spot share of P0 the fluence
-/// itself was. Structured like sample_axisymmetric_volume's own loop —
-/// radial index per (x, y) column, contiguous accumulate over z — so it
+/// model's counterpart to compute_validity_volume in the other point-source
+/// models: "how much of this voxel is signal" rather than "is diffusion
+/// justified here". A voxel's variance is the sum over spots of the
+/// kernel's variance at each spot's distance (independent, since each draws
+/// on a different part of the kernel), scaled the same way the fluence
+/// itself is. Structured like sample_axisymmetric_volume's own loop, so it
 /// costs one more pass of the same order, not a multiple.
 fn noise_codes(
     p: &MonteCarloParams,
@@ -1309,15 +1250,13 @@ mod tests {
         }
     }
 
-    /// How the work is split must not change the answer. That is the whole
-    /// contract behind the parallelism, and the one part of it that could
-    /// break silently — a batch leaking state into its neighbour would show
-    /// up here and almost nowhere else. Seven workers rather than a divisor
-    /// of N_BATCHES, so the uneven chunking gets exercised too.
-    ///
-    /// Not bit-identical: the reduction groups the same terms differently,
-    /// and floating-point addition isn't associative. Identical to within a
-    /// few ulp, which is what "doesn't change the answer" can mean here.
+    /// How the work is split must not change the answer — the whole contract
+    /// behind the parallelism, and the part that could break silently (a
+    /// batch leaking state into its neighbour). Seven workers, not a divisor
+    /// of N_BATCHES, so the uneven chunking gets exercised too. Not
+    /// bit-identical (float addition isn't associative once the reduction
+    /// groups terms differently), so "doesn't change the answer" means
+    /// within a few ulp here.
     #[test]
     fn the_answer_does_not_depend_on_how_many_workers_run_it() {
         let p = params(vec![layer(0.1, 100.0, 0.9, 1.4, 2.0)], 32.0);
@@ -1342,20 +1281,17 @@ mod tests {
 
     /// The one test here that checks an *absolute* level against a closed
     /// form, rather than a ratio, a slope, or the model against itself. Take
-    /// scattering away and the answer is Beer-Lambert, which is exact:
+    /// scattering away and the answer is Beer-Lambert:
     ///
     ///   int_V Phi dV = int exp(-mu_t z) dz over the bin's depth
     ///
-    /// so the fluence in radial bin 0 (where an unscattered pencil beam
-    /// stays) is [exp(-mu_t z_lo) - exp(-mu_t z_hi)] / (mu_t * V). With
-    /// n = 1 there is no specular loss and no Fresnel either, so what is
-    /// left is precisely the estimator, its normalization, and its units —
-    /// the parts that every other test here would happily agree with
-    /// themselves about while being wrong by a constant factor.
-    ///
-    /// Checked against the run's own reported error bars, so this pins down
-    /// the noise estimate against a known answer at the same time. The seed
-    /// is fixed, so there is nothing flaky about the margin.
+    /// so radial bin 0's fluence is [exp(-mu_t z_lo) - exp(-mu_t z_hi)] /
+    /// (mu_t * V). With n = 1 there's no specular loss or Fresnel either, so
+    /// what's left is exactly the estimator, its normalization and its
+    /// units — the parts every other test here could agree with itself
+    /// about while still being wrong by a constant factor. Checked against
+    /// the run's own reported error bars, which pins down the noise
+    /// estimate too; the fixed seed keeps the margin from being flaky.
     #[test]
     fn a_non_scattering_slab_reproduces_beer_lambert() {
         let mua = 1.0;
@@ -1406,19 +1342,16 @@ mod tests {
 
     /* ── against the models it exists to check ── */
 
-    /// The headline claim of this model — that the diffusion models are
-    /// approximations of *this* — only means something if the two actually
-    /// agree where diffusion is supposed to be valid. So: a high-albedo
-    /// homogeneous slab, compared on-axis against FPW1992 in absolute terms,
-    /// several transport mean free paths below the surface and several
-    /// penetration depths above the floor.
-    ///
-    /// The one correction that has to be made explicit is the specular loss.
-    /// This model deducts it at launch and FPW1992 ignores it, so FPW1992's
-    /// fluence is that of a beam carrying 2.8% more power. Dividing it out is
-    /// the whole of the systematic difference between them here — which is
-    /// worth knowing, and is why this compares absolute levels rather than
-    /// the decay rate that the test below settles for.
+    /// The headline claim of this model — that the diffusion models
+    /// approximate *this* — only means something if the two agree where
+    /// diffusion is supposed to be valid. So: a high-albedo homogeneous
+    /// slab, compared on-axis against FPW1992 in absolute terms, several
+    /// mean free paths below the surface and penetration depths above the
+    /// floor. One correction has to be explicit: this model deducts
+    /// specular loss at launch and FPW1992 doesn't, so FPW1992's fluence
+    /// carries 2.8% more power — dividing that out is the whole systematic
+    /// difference, and why this compares absolute levels rather than the
+    /// decay rate the test below settles for.
     #[test]
     fn diffusive_regime_matches_fpw1992_in_absolute_terms() {
         let (mua, mus, g, n) = (0.1, 100.0, 0.9, 1.4);
@@ -1725,20 +1658,14 @@ mod tests {
     }
 }
 
-/// Timing, kept apart from the correctness tests because these are budget
-/// checks rather than assertions about the physics. The photon budget is the
-/// one parameter here whose right value is purely a time/noise trade, so it
-/// is worth pinning down what a run actually costs — and worth noticing if a
-/// change to the inner loop makes it cost noticeably more.
-///
-/// These run at TEST_WORKERS like every other test here, and with bounds
-/// loose enough to survive a contended machine, because that is all an
-/// in-suite wall-clock assertion can honestly check: the harness runs tests
-/// concurrently, so anything tighter measures how busy the other tests are.
-/// What they do catch is an algorithmic blowup. The numbers quoted in the
-/// doc comments below come from dedicated runs on an otherwise idle machine
-/// (`cargo test --release <name> -- --nocapture --test-threads=1`), which is
-/// the only way to measure this meaningfully.
+/// Timing, kept apart from the correctness tests: budget checks rather than
+/// physics assertions, worth having since the photon budget's right value is
+/// purely a time/noise trade. Bounds are loose enough to survive a
+/// contended machine — the harness runs tests concurrently, so that's all
+/// an in-suite wall-clock assertion can honestly check; what they do catch
+/// is an algorithmic blowup. The numbers quoted below come from dedicated
+/// runs on an otherwise idle machine instead
+/// (`cargo test --release <name> -- --nocapture --test-threads=1`).
 #[cfg(test)]
 mod perf_and_sanity {
     use super::*;

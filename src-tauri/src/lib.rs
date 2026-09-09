@@ -123,18 +123,16 @@ fn monte_carlo_volume(params: MonteCarloParams, progress: Channel<f64>) -> Respo
 /* ================================================================
    SETTINGS FILES
    ================================================================
-   Whole-text read and write, for the parameter files the frontend
-   saves and loads (src/settings.ts owns their shape). The path always
-   comes from the native dialog the user has just picked with, so this
-   pair deliberately does no scoping of its own — which is the reason
-   it exists instead of tauri-plugin-fs, whose scope configuration is
-   most of what that plugin would add here. The webview runs nothing
-   but this app's own bundled code, so these are exactly as privileged
-   as the app already is, and no more.
+   Whole-text read and write for the parameter files the frontend saves
+   and loads (src/settings.ts owns their shape). No scoping of its own,
+   deliberately — the path always comes from a dialog the user just
+   picked with, and the webview runs nothing but this app's own bundled
+   code, so these are exactly as privileged as the app already is. That's
+   also why this exists instead of tauri-plugin-fs, whose scope
+   configuration is most of what it would add here.
 
-   The error is stringly typed because that is what crosses the IPC
-   boundary as a rejected promise; the frontend shows it verbatim, so
-   it carries the path as well as the reason.
+   Errors are stringly typed because that's what crosses the IPC boundary
+   as a rejected promise, and the frontend shows it verbatim.
    ================================================================ */
 
 #[tauri::command(async)]
