@@ -86,6 +86,11 @@ building on Windows (e.g. via CI with a build matrix), and likewise for Linux.
   instead. He may explicitly authorize committing directly within a given conversation (e.g. "make the
   commits yourself for this session"); treat that as a one-off grant for that conversation, not a standing
   change to this default — go back to proposing messages once it ends.
+- Commit message length: the subject line does most of the work. A body is for what the diff can't say —
+  why the change was made, what was ruled out, what was deliberately left alone — and its length should be
+  in proportion to the change: a small or self-evident one wants a sentence or two, or no body at all. Save
+  the long body for a change that earns it (a subtle bug, a decision someone will second-guess later);
+  don't write one to narrate a rename, a comment fix, or a two-line patch.
 - Keep changes minimal and behavior-preserving unless asked otherwise; this is a small hobby-scale project —
   avoid speculative abstractions or new dependencies unless asked.
 - Don't commit `node_modules/`, `dist/`, or `src-tauri/target/` (already gitignored).
