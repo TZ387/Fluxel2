@@ -71,7 +71,9 @@
 use crate::physics::beam::{self, BeamPattern, BeamProfile, Grid};
 use crate::physics::bessel::{j0, j0_zero, j1};
 use crate::physics::boundary::extrapolation_length;
-use crate::physics::validity::{mfp_ratio_code, require, ValidityResult};
+use crate::physics::validity::{
+    mfp_ratio_code, require, scattering_dominance_warning, source_resolution_warning, ValidityResult,
+};
 use serde::{Deserialize, Serialize};
 
 /// Every layer carries its own thickness, so the grid's depth is the stack's
@@ -262,14 +264,9 @@ pub fn check_validity(p: &LiemertKienleParams, derived: &LiemertKienleDerived) -
             ));
         }
 
-        let ratio = d.musp / l.mua;
-        if ratio < 10.0 {
-            reasons.push(format!(
-                "layer {}: μ<sub>s</sub>'/μ<sub>a</sub> = {:.2} (want ≳10) — absorption is too strong \
-                 relative to scattering for light to randomize direction before being absorbed",
-                i + 1,
-                ratio
-            ));
+        // Shared with fpw1992.rs, which asks the same of its one medium.
+        if let Some(reason) = scattering_dominance_warning(&format!("layer {}: ", i + 1), d.musp, l.mua) {
+            reasons.push(reason);
         }
     }
 
@@ -286,15 +283,8 @@ pub fn check_validity(p: &LiemertKienleParams, derived: &LiemertKienleDerived) -
     let dx = p.lx / p.nx as f64;
     let dy = p.ly / p.ny as f64;
     let dz = derived.lz / p.nz as f64;
-    let max_voxel = dx.max(dy).max(dz);
-    if max_voxel > 0.5 * derived.z0 {
-        reasons.push(format!(
-            "voxel size (up to {:.3} cm) is ≳half the source depth z<sub>0</sub> \
-             ({:.3} cm) where fluence peaks and varies fastest — the grid is too coarse \
-             to resolve that peak, so results near the source will be smeared out. \
-             Increase N<sub>x</sub>/N<sub>y</sub>/N<sub>z</sub> or shrink the domain",
-            max_voxel, derived.z0
-        ));
+    if let Some(reason) = source_resolution_warning(dx, dy, dz, derived.z0) {
+        reasons.push(reason);
     }
 
     let beam = BeamProfile::from_params(&p.beam_profile, p.beam_width);

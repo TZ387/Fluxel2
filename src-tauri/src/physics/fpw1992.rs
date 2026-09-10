@@ -5,7 +5,9 @@
 
 use crate::physics::beam::{self, BeamPattern, BeamProfile, Grid};
 use crate::physics::boundary::extrapolation_length;
-use crate::physics::validity::{mfp_ratio_code, require, ValidityResult};
+use crate::physics::validity::{
+    mfp_ratio_code, require, scattering_dominance_warning, source_resolution_warning, ValidityResult,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
@@ -77,22 +79,14 @@ pub fn check_validity(p: &Fpw1992Params, derived: &Fpw1992Derived) -> ValidityRe
         return ValidityResult { valid: false, reasons };
     }
 
-    let ratio = derived.musp / p.mua;
     let min_dim = p.lx.min(p.ly).min(p.lz);
     let mfp_prime = 1.0 / (p.mua + derived.musp);
     let z0 = mfp_prime;
 
-    let dx = p.lx / p.nx as f64;
-    let dy = p.ly / p.ny as f64;
-    let dz = p.lz / p.nz as f64;
-    let max_voxel = dx.max(dy).max(dz);
-
-    if ratio < 10.0 {
-        reasons.push(format!(
-            "μ<sub>s</sub>'/μ<sub>a</sub> = {:.2} (want ≳10) — absorption is too strong \
-             relative to scattering for light to randomize direction before being absorbed",
-            ratio
-        ));
+    // Both shared with liemert_kienle.rs, which asks them of every layer
+    // rather than of one medium — see validity.rs.
+    if let Some(reason) = scattering_dominance_warning("", derived.musp, p.mua) {
+        reasons.push(reason);
     }
     if mfp_prime > 0.5 * min_dim {
         reasons.push(format!(
@@ -104,14 +98,9 @@ pub fn check_validity(p: &Fpw1992Params, derived: &Fpw1992Derived) -> ValidityRe
             mfp_prime, min_dim
         ));
     }
-    if max_voxel > 0.5 * z0 {
-        reasons.push(format!(
-            "voxel size (up to {:.3} cm) is ≳half the source depth z<sub>0</sub> \
-             ({:.3} cm) where fluence peaks and varies fastest — the grid is too coarse \
-             to resolve that peak, so results near the source will be smeared out. \
-             Increase N<sub>x</sub>/N<sub>y</sub>/N<sub>z</sub> or shrink the domain",
-            max_voxel, z0
-        ));
+    let (dx, dy, dz) = (p.lx / p.nx as f64, p.ly / p.ny as f64, p.lz / p.nz as f64);
+    if let Some(reason) = source_resolution_warning(dx, dy, dz, z0) {
+        reasons.push(reason);
     }
 
     let pattern = BeamPattern::from_params(&p.beam_pattern, p.pattern_count, p.pattern_spacing);
