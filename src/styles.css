@@ -184,6 +184,15 @@ input[type=range]:focus-visible { box-shadow: 0 0 0 3px rgba(88,166,255,0.3); }
 
 .param-ctrl select.p-select {
   flex: 1;
+  /* A flex item's min-width defaults to auto, and for a <select> that
+     resolves to its *widest option* — so without this a long option label
+     pushes the control past its .param-grid cell and over the parameter
+     drawn next to it, since those columns are sized from the available
+     space (minmax(220px, 1fr)) and never grow to fit content. Ellipsis so
+     that a label which genuinely doesn't fit degrades into a readable
+     truncation rather than being cut mid-glyph. */
+  min-width: 0;
+  text-overflow: ellipsis;
   font-family: var(--mono);
   font-size: 0.75rem;
   color: var(--text);

@@ -194,7 +194,7 @@ const BEAM_PATTERN_PARAM: SelectParamDef = {
        cross — which is at least symmetric under a quarter turn — sits closer
        to what they assume than a bare line does. `aliases` keeps files
        written when this was a plain line scan loading. */
-    { value: "cross", label: "Cross scan (two perpendicular lines)", aliases: ["line"] },
+    { value: "cross", label: "Cross scan (two lines)", aliases: ["line"] },
     { value: "grid", label: "Grid (fractional array)" },
   ],
 };
