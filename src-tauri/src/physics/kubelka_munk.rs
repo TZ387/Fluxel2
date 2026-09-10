@@ -13,7 +13,7 @@
 //! those models take — for a diffuse field K is about 2*mu_a. The two
 //! factors of two cancel in the absorbed density, which is why
 //!
-//!     A = K (I + J)
+//!   A = K (I + J)
 //!
 //! is exactly right even though I + J is only half a fluence rate. It falls
 //! out of the two-flux equations themselves: for the net flux F = I - J,
