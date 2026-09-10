@@ -329,6 +329,81 @@ mod tests {
         );
     }
 
+    /// The one identity two-flux theory offers that isn't true by
+    /// construction. R + T + A = 1 cannot fail here — `a_total` is *defined*
+    /// as 1 - R - T — but the volume is built along a completely different
+    /// path (km_layer_profile per layer, stitched by the r_below recursion
+    /// and sampled at voxel centres), and the two have to meet. From
+    /// dI/dz = -(K+S)I + SJ and its upward partner, the net flux F = I - J
+    /// obeys dF/dz = -K(I+J), which is exactly the absorbed density this
+    /// model reports, so
+    ///
+    ///     integral(A dz) = F(0) - F(Lz) = I0 (1 - R - T) = I0 * A_total
+    ///
+    /// and over the whole box that is A_total * P0. One number, tying every
+    /// layer's profile, the interface stitching, the depth sampling, the
+    /// P0/(Lx*Ly) normalization and the lateral broadcast to a quantity
+    /// derived without any of them.
+    ///
+    /// Deliberately asymmetric — Lx != Ly, Nx != Ny, P0 != 1 — so that a
+    /// transposed extent or a dropped P0 can't pass by cancelling.
+    #[test]
+    fn the_volume_carries_the_absorbed_power() {
+        // The interfaces land on voxel boundaries (0.5 and 2.0 cm over 400
+        // voxels of 0.005), so no voxel straddles a layer and the only error
+        // left is the midpoint rule's own.
+        let p = KubelkaMunkParams {
+            lx: 2.0,
+            ly: 3.0,
+            nx: 5,
+            ny: 7,
+            nz: 400,
+            p0: 2.5,
+            layers: vec![layer(0.1, 50.0, 0.5), layer(0.4, 80.0, 1.5)],
+        };
+        let d = derived(&p);
+        let (_, abs) = compute_volume(&p);
+
+        let dv = (p.lx / p.nx as f64) * (p.ly / p.ny as f64) * (d.lz / p.nz as f64);
+        let in_box = abs.iter().map(|&a| a as f64).sum::<f64>() * dv;
+        let want = d.a_total * p.p0;
+        println!("KM absorbed in box {in_box:.6} vs A_total*P0 {want:.6} (ratio {:.6})", in_box / want);
+        // Measured at 2.5e-5, and the test below shows that residual is the
+        // depth quadrature rather than a fixed bias — so the bound here is
+        // about catching a factor, not the last digit.
+        assert!(
+            (in_box / want - 1.0).abs() < 1e-3,
+            "the volume holds {in_box:.5} W but R/T/A say {want:.5} W was absorbed"
+        );
+    }
+
+    /// And that the residual above really is the depth quadrature rather
+    /// than a constant error the tolerance is hiding: refining N_z has to
+    /// shrink it.
+    #[test]
+    fn the_absorbed_power_converges_with_depth_resolution() {
+        let at = |nz: usize| {
+            let p = KubelkaMunkParams {
+                lx: 1.0,
+                ly: 1.0,
+                nx: 2,
+                ny: 2,
+                nz,
+                p0: 1.0,
+                layers: vec![layer(0.1, 50.0, 0.5), layer(0.4, 80.0, 1.5)],
+            };
+            let d = derived(&p);
+            let (_, abs) = compute_volume(&p);
+            let dv = (p.lx / p.nx as f64) * (p.ly / p.ny as f64) * (d.lz / p.nz as f64);
+            let in_box = abs.iter().map(|&a| a as f64).sum::<f64>() * dv;
+            (in_box / (d.a_total * p.p0) - 1.0).abs()
+        };
+        let coarse = at(25);
+        let fine = at(400);
+        println!("KM absorbed-power error: N_z=25 {coarse:.3e}, N_z=400 {fine:.3e}");
+        assert!(fine < coarse, "refining N_z didn't help: {coarse:.3e} -> {fine:.3e}");
+    }
+
     /// A layer thinner than one depth voxel is stepped straight over, so it
     /// leaves no trace in the profile no matter how strongly it absorbs.
     #[test]
