@@ -352,6 +352,62 @@ mod tests {
         assert!(on_arm > 2.0 * between, "arm {on_arm} vs diagonal {between}");
     }
 
+    /// This model has two code paths for the same physics: a pencil beam at
+    /// a single spot gets the real+image dipole evaluated exactly per voxel,
+    /// and everything else goes through beam.rs's shared (rho, z) table. The
+    /// only thing linking them was narrow_gaussian_matches_pencil below,
+    /// whose 5% has to cover the convolution quadrature *and* the table's
+    /// radial interpolation at once, so neither is pinned on its own.
+    ///
+    /// Coincident spots separate them. Four spots at zero pitch are
+    /// physically one spot — they share P0 and sit on top of each other —
+    /// but the pattern fails is_single(), so it takes the table path, with a
+    /// pencil profile and therefore no convolution anywhere. Everything left
+    /// is the interpolation, and it is worst on the axis, where the dipole
+    /// is sharpest and the table's radial step is coarsest relative to it.
+    ///
+    /// Measured at 3.7%, on the axis at the surface — which says most of
+    /// narrow_gaussian_matches_pencil's 5% was interpolation, not
+    /// quadrature. A pencil kernel is the sharpest thing the table is ever
+    /// asked to carry, so this is the worst case rather than a typical one:
+    /// a Gaussian or flat-top profile is convolved before it reaches the
+    /// table and arrives already smooth.
+    #[test]
+    fn the_table_path_reproduces_the_exact_pencil_path() {
+        let exact = base_params("pencil", 0.0);
+        let mut tabled = base_params("pencil", 0.0);
+        tabled.beam_pattern = "grid".to_string();
+        tabled.pattern_count = 2;
+        tabled.pattern_spacing = 0.0;
+        assert_eq!(derived(&tabled).spots, 4, "the point is four spots in one place");
+
+        let (phi_exact, _) = compute_volume(&exact, &derived(&exact));
+        let (phi_tabled, _) = compute_volume(&tabled, &derived(&tabled));
+
+        let peak = phi_exact.iter().fold(0.0f32, |m, &v| m.max(v)) as f64;
+        let mut worst = 0.0f64;
+        let mut worst_at = 0usize;
+        for (i, (&a, &b)) in phi_exact.iter().zip(phi_tabled.iter()).enumerate() {
+            // Anywhere the field is worth looking at — a relative error on a
+            // value a millionth of the peak is not what this is about.
+            if (a as f64) < 1e-4 * peak {
+                continue;
+            }
+            let rel = ((a - b) as f64 / a as f64).abs();
+            if rel > worst {
+                worst = rel;
+                worst_at = i;
+            }
+        }
+        let (nx, ny) = (exact.nx, exact.ny);
+        println!(
+            "table vs exact: worst {:.4} at voxel ({}, {}, {})",
+            worst, worst_at % nx, (worst_at / nx) % ny, worst_at / (nx * ny)
+        );
+        assert!(worst > 0.0, "suspiciously exact — did both runs take the same path?");
+        assert!(worst < 0.06, "table path deviates from the exact one by {worst:.4}");
+    }
+
     /// A beam far narrower than the grid's voxel size should reproduce the
     /// pencil-beam result closely — the same cross-check idea as
     /// liemert_kienle.rs's narrow_gaussian_matches_pencil.
