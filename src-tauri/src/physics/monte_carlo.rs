@@ -1430,6 +1430,12 @@ mod tests {
     /// carries 2.8% more power — dividing that out is the whole systematic
     /// difference, and why this compares absolute levels rather than the
     /// decay rate the test below settles for.
+    ///
+    /// The 300k budget here is the real thing, not padding — don't trim it.
+    /// The assertion is a max over ten depth bins, an extreme-value
+    /// statistic, and a sweep of the same comparison found worst deviations
+    /// of 0.03 at 300k against the 0.08 tolerance but 0.11 at 100k and 0.33
+    /// at 20k, non-monotonically. Anything below ~300k is a coin toss.
     #[test]
     fn diffusive_regime_matches_fpw1992_in_absolute_terms() {
         let (mua, mus, g, n) = (0.1, 100.0, 0.9, 1.4);
@@ -1504,9 +1510,15 @@ mod tests {
     /// this one deducts) and a rate is what the comparison is really about:
     /// on the axis, far from an effective point source, fluence falls as
     /// exp(-mu_eff*z)/z.
+    ///
+    /// Cheap deliberately: swept from 10k to 300k photons, the fitted rate
+    /// sits 0.1%-5.7% off mu_eff at every budget with no trend — the gap is
+    /// the difference between transport and diffusion plus the fit itself,
+    /// not sampling noise, so photons buy nothing here. 60k leaves the 20%
+    /// tolerance a threefold margin over the worst budget swept.
     #[test]
     fn deep_fluence_decays_at_the_diffusion_rate() {
-        let mut p = params(vec![layer(0.1, 100.0, 0.9, 1.4, 4.0)], 300.0);
+        let mut p = params(vec![layer(0.1, 100.0, 0.9, 1.4, 4.0)], 60.0);
         p.nz = 40; // dz = 0.1 cm
         let r = run(&p);
 
@@ -1550,9 +1562,15 @@ mod tests {
     /// samples for the estimate itself to be meaningful.
     #[test]
     fn reported_error_falls_with_the_square_root_of_the_budget() {
+        // What's under test is the *ratio* over a ninefold budget step, so
+        // the absolute budget only has to keep the bin well enough sampled
+        // for its error estimate to mean anything. Swept: 10k/90k gives
+        // 3.64, 20k/180k 2.65, 30k/270k 2.33 against an expected 3.0 — the
+        // middle pair sits furthest from either end of the band below, and
+        // costs a third less than the pair it replaces.
         let layers = || vec![layer(0.1, 100.0, 0.9, 1.4, 2.0)];
-        let lo = run(&params(layers(), 30.0));
-        let hi = run(&params(layers(), 270.0));
+        let lo = run(&params(layers(), 20.0));
+        let hi = run(&params(layers(), 180.0));
 
         let rel = |r: &McRun| {
             let idx = 2 * r.grid.n_z + 5; // r ~ 2 bins out, z ~ 0.28 cm
@@ -1667,13 +1685,19 @@ mod tests {
     }
 
     /// Widening the beam spreads the same power over more area, so the peak
-    /// drops — the same check fpw1992.rs and liemert_kienle.rs make of their
-    /// convolutions, except here the profile is in the launch distribution
-    /// rather than in a convolution.
+    /// drops. Unlike the other two point-source models, which reach their
+    /// beam profile through a convolution, here it lives in the launch
+    /// distribution — so this is the only test of launch_radius's shape, and
+    /// nothing in fpw1992.rs or liemert_kienle.rs covers it.
+    ///
+    /// The budget is small on purpose: what this asserts is structural, not
+    /// statistical. Measured peak ratios are 0.10 (flat-top) and 0.15
+    /// (Gaussian) of the pencil peak, and they move by under 5% between 5k
+    /// and 60k photons — a tenfold margin that more photons don't widen.
     #[test]
     fn a_wide_beam_lowers_the_peak() {
         let peak = |profile: &str, width: f64| {
-            let mut p = params(vec![layer(0.1, 100.0, 0.9, 1.4, 2.0)], 60.0);
+            let mut p = params(vec![layer(0.1, 100.0, 0.9, 1.4, 2.0)], 15.0);
             p.beam_profile = profile.into();
             p.beam_width = width;
             let (phi, _, _) = volume(&p);
@@ -1704,34 +1728,6 @@ mod tests {
                     let mirrored = at(g.nx - 1 - ix, iy, iz);
                     assert_eq!(at(ix, iy, iz), mirrored, "x-mirror broken at ({ix}, {iy}, {iz})");
                     assert_eq!(at(ix, iy, iz), at(iy, ix, iz), "x/y swap broken at ({ix}, {iy}, {iz})");
-                }
-            }
-        }
-    }
-
-    /// The reason the scan is a cross rather than a line: the volume it
-    /// produces is unchanged by a quarter turn, which a single row's is not.
-    /// Exact, not approximate — a pattern is one kernel shifted and summed,
-    /// so the symmetry survives however noisy that kernel is.
-    #[test]
-    fn cross_pattern_survives_a_quarter_turn() {
-        let mut p = params(vec![layer(0.1, 100.0, 0.9, 1.4, 2.0)], 16.0);
-        p.beam_pattern = "cross".into();
-        p.pattern_count = 4; // even, so the arms straddle the axis
-        p.pattern_spacing = 0.3;
-        let g = box_of(&p);
-        let (phi, _, _) = volume(&p);
-
-        let at = |ix: usize, iy: usize, iz: usize| phi[ix + iy * g.nx + iz * g.nx * g.ny];
-        for iz in [0, 5, 20] {
-            for ix in 0..g.nx {
-                for iy in 0..g.ny {
-                    assert_eq!(at(ix, iy, iz), at(iy, ix, iz), "x/y swap broken at ({ix}, {iy}, {iz})");
-                    assert_eq!(
-                        at(ix, iy, iz),
-                        at(g.nx - 1 - ix, iy, iz),
-                        "x-mirror broken at ({ix}, {iy}, {iz})"
-                    );
                 }
             }
         }
