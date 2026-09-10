@@ -89,6 +89,31 @@ export interface ParamGroup {
   repeat?: RepeatSpec;
 }
 
+/** How one of the two plots labels what it is showing. Per-model because
+    the models don't all compute the same quantity: three of them report a
+    fluence rate and its μ_a-weighted absorption, but Kubelka-Munk's two-flux
+    field is the sum of its up and down diffuse fluxes, which is a different
+    quantity in the same units (see its entry below, and kubelka_munk.rs). */
+export interface FieldLabels {
+  /** Panel heading. HTML — authored here, never from user input. */
+  title: string;
+  /** Short symbol for the hover readout, where a full heading won't fit. */
+  symbol: string;
+}
+
+/** Both plots' labels for one model, phi panel and abs panel. */
+export interface ModelFields {
+  phi: FieldLabels;
+  abs: FieldLabels;
+}
+
+/** What the three models solving a transport equation for fluence report.
+    Kubelka-Munk is the exception and declares its own. */
+const FLUENCE_FIELDS: ModelFields = {
+  phi: { title: "Fluence &Phi; [W/cm&sup2;]", symbol: "\u03A6" },
+  abs: { title: "Absorption A = &mu;<sub>a</sub> &middot; &Phi; [W/cm&sup3;]", symbol: "A" },
+};
+
 /** What a model's per-voxel overlay buffer means, for the checkbox next to
     each plot and the three bands of its legend. Per-model because the codes
     (0/1/2) are the only thing the models share about it: for the diffusion
@@ -131,6 +156,8 @@ export interface ModelDef<D = any> {
   command: string;
   /** The voxel box this model's params work out to. */
   grid: (params: Record<string, any>) => GridDims;
+  /** What the two plots are showing, for their headings and hover readouts. */
+  fields: ModelFields;
   summaryLine: (derived: D, dt: string) => string;
   /** Heading above this model's validity warnings. Per-model because the
       models don't share an approximation: two are diffusion, one is two-flux,
@@ -315,6 +342,7 @@ export const MODELS: Record<string, ModelDef> = {
       const width = 2 * nr * (p.dr as number);
       return { nx: 2 * nr, ny: 2 * nr, nz: Math.max(1, p.nz as number), lx: width, ly: width };
     },
+    fields: FLUENCE_FIELDS,
     progress: true,
     summaryLine: (derived: MonteCarloDerived, dt: string) =>
       `Done in ${dt} ms — ${fmtCount(derived.photons)} photons | ` +
@@ -375,6 +403,7 @@ export const MODELS: Record<string, ModelDef> = {
     label: "Liemert & Kienle (2010) — N-layer, point-source diffusion",
     command: "liemert_kienle",
     grid: cartesianGrid,
+    fields: FLUENCE_FIELDS,
     summaryLine: (derived: LiemertKienleDerived, dt: string) =>
       `Done in ${dt} ms — ${derived.layers.length} layer${derived.layers.length === 1 ? "" : "s"} | ` +
       `z<sub>0</sub> = ${num(derived.z0, 3)} cm | L<sub>z</sub> = ${num(derived.Lz, 3)} cm | ` +
@@ -416,6 +445,7 @@ export const MODELS: Record<string, ModelDef> = {
     label: "Farrell, Patterson & Wilson (1992) — pencil beam, semi-infinite slab",
     command: "fpw1992",
     grid: cartesianGrid,
+    fields: FLUENCE_FIELDS,
     summaryLine: (derived: Fpw1992Derived, dt: string) =>
       `Done in ${dt} ms — μ<sub>s</sub>' = ${num(derived.musp, 3)} cm⁻¹ | ` +
       `D = ${num(derived.D, 4)} cm | μ<sub>eff</sub> = ${num(derived.mueff, 4)} cm⁻¹ | ` +
@@ -460,6 +490,17 @@ export const MODELS: Record<string, ModelDef> = {
     label: "Kubelka–Munk — two-flux, N-layer stack (diffuse illumination)",
     command: "kubelka_munk",
     grid: cartesianGrid,
+    /* Not Φ, and not μ_a·Φ. This model's field is I + J, the sum of its two
+       diffuse fluxes, and K is the Kubelka-Munk absorption coefficient
+       rather than μ_a — the pair is self-consistent (A = K(I+J) integrates
+       to exactly the power the R/T/A balance says was absorbed, which
+       kubelka_munk.rs has a test for), but I + J is not the fluence rate the
+       other three plot and K is not μ_a. Labelling both panels the same way
+       would invite a comparison that doesn't hold. */
+    fields: {
+      phi: { title: "Two-flux sum I + J [W/cm&sup2;]", symbol: "I+J" },
+      abs: { title: "Absorption A = K &middot; (I + J) [W/cm&sup3;]", symbol: "A" },
+    },
     summaryLine: (derived: KubelkaMunkDerived, dt: string) =>
       `Done in ${dt} ms — R = ${num(derived.R_total, 4)} | ` +
       `T = ${num(derived.T_total, 4)} | absorbed = ${num(derived.A_total, 4)} | ` +
@@ -470,8 +511,12 @@ export const MODELS: Record<string, ModelDef> = {
     /* Unlike FPW1992's pencil beam, KM assumes broad diffuse
        illumination uniform over the top face, so there's no lateral
        beam position — only per-layer optical properties/thickness
-       plus the lateral extent (for normalising incident power to a
-       flux density) and voxel counts for the 3-D viewer. */
+       plus the lateral extent and voxel counts for the 3-D viewer.
+       Note L_x/L_y are not a viewing window here the way they are in
+       the other three: the incident power is spread over the face, so
+       they set the irradiance P_0/(L_x·L_y) and widening the face dims
+       the whole field. N_x/N_y really are just the viewer's — the
+       profile is 1-D and broadcast across them (kubelka_munk.rs). */
     paramGroups: [
       {
         id: "layers",
@@ -488,8 +533,8 @@ export const MODELS: Record<string, ModelDef> = {
         title: "Illumination & lateral grid",
         params: [
           { id: "p0", label: "P<sub>0</sub> incident diffuse power [W]", min: 0.01, max: 10, step: 0.001, def: 1.0, fmt: fmt3 },
-          { id: "lx", label: "L<sub>x</sub> [cm]", min: 0.5, max: 6, step: 0.001, def: 2, fmt: fmt3 },
-          { id: "ly", label: "L<sub>y</sub> [cm]", min: 0.5, max: 6, step: 0.001, def: 2, fmt: fmt3 },
+          { id: "lx", label: "L<sub>x</sub> — illuminated face, x [cm]", min: 0.5, max: 6, step: 0.001, def: 2, fmt: fmt3 },
+          { id: "ly", label: "L<sub>y</sub> — illuminated face, y [cm]", min: 0.5, max: 6, step: 0.001, def: 2, fmt: fmt3 },
           { id: "nx", label: "N<sub>x</sub> voxels", min: 4, max: 400, step: 1, def: 20, fmt: fmt0 },
           { id: "ny", label: "N<sub>y</sub> voxels", min: 4, max: 400, step: 1, def: 20, fmt: fmt0 },
           { id: "nz", label: "N<sub>z</sub> voxels (through depth)", min: 10, max: 400, step: 1, def: 60, fmt: fmt0 },

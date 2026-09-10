@@ -241,6 +241,19 @@ const MODEL_HELP: ModelHelp[] = [
       "A 1-D two-flux model. Rather than tracking a beam's exact direction, it lumps all light into two " +
         "counter-propagating diffuse streams — downward I(z) and upward J(z) — through an arbitrary stack of " +
         "homogeneous layers, each with its own absorption K, scattering S, and thickness d.",
+      "Read its two plots as its own quantities, not the other three models'. The field here is I + J, the sum " +
+        "of the two fluxes, which for a hemispherically isotropic field is about <em>half</em> the fluence " +
+        "rate &Phi; the others report; and K is the Kubelka-Munk absorption coefficient, about twice " +
+        "&mu;<sub>a</sub>, not &mu;<sub>a</sub> itself. Those two factors of two cancel, so the absorbed " +
+        "density A = K(I + J) is exactly right — integrating it through the stack gives back the power the " +
+        "R/T/A balance says was absorbed — but I + J and &Phi; are not the same number and shouldn't be read " +
+        "off against each other. Both panels are labelled accordingly.",
+      "L<sub>x</sub> and L<sub>y</sub> do something different here too. In the other three they only frame " +
+        "how much of the answer you see; here the incident power is spread evenly over the illuminated face, " +
+        "so the irradiance entering the top is P<sub>0</sub>/(L<sub>x</sub>&middot;L<sub>y</sub>) and " +
+        "widening the face dims the whole field in proportion. N<sub>x</sub> and N<sub>y</sub>, by contrast, " +
+        "are pure display: the profile is one-dimensional and simply copied across every column, so raising " +
+        "them enlarges the volume without adding anything to it.",
     ],
     equation:
       "a = 1 + K/S\n" +
@@ -259,6 +272,9 @@ const MODEL_HELP: ModelHelp[] = [
     limits: [
       "No lateral (x, y) structure at all — the depth profile is broadcast identically across every column, " +
         "which is only physically correct for genuinely diffuse illumination, not a beam.",
+      "Its K and S are not the &mu;<sub>a</sub> and &mu;<sub>s</sub>' the other three models take, and this " +
+        "app converts neither way — so a stack entered here and the same tissue entered in another model are " +
+        "not the same optical properties, however similar the numbers look.",
       "Needs S/K &gtrsim; 5 in each layer for the two-flux picture to hold.",
       "Needs each layer's optical thickness &gamma; &gtrsim; 1 — an optically thin layer behaves more like " +
         "direct transmission than a diffuse field.",

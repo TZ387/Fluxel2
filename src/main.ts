@@ -1,5 +1,5 @@
 import "./styles.css";
-import { MODELS, buildModelSelect, type OverlaySpec } from "./models";
+import { MODELS, buildModelSelect, type ModelFields, type OverlaySpec } from "./models";
 import { buildModelParams, getParams } from "./ui-params";
 import {
   COLORMAPS,
@@ -41,9 +41,11 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 type VolumeKind = "phi" | "abs";
 
 /** Units for each field, for the hover readout — the plot titles carry them
-    for the eye, but the readout quotes a number and has to say what of. */
+    for the eye, but the readout quotes a number and has to say what of. The
+    same for every model: what differs between them is which *quantity* is in
+    those units, which is the model's own business (models.ts's `fields`, and
+    Simulation.fields below). */
 const UNITS: Record<VolumeKind, string> = { phi: "W/cm\u00B2", abs: "W/cm\u00B3" };
-const SYMBOL: Record<VolumeKind, string> = { phi: "\u03A6", abs: "A" };
 
 interface VolumeCache {
   /** The volume as computed — a view onto the IPC buffer, never copied. */
@@ -92,6 +94,12 @@ const Simulation = {
       the dropdown at draw time: the two can disagree, since switching model
       rebuilds the panel without discarding the volume already computed. */
   overlay: null as OverlaySpec | null,
+  /** What the two volumes actually are, for the panel headings and the hover
+      readout — stored with the result for the same reason `overlay` is, and
+      not the same for every model: Kubelka-Munk's field is its two-flux sum,
+      not a fluence rate (models.ts). Opens on the default model's, since the
+      markup's own headings say that much before anything has been run. */
+  fields: MODELS.monteCarlo.fields as ModelFields,
 
   /** Store a freshly computed result, and the grid and geometry it used. */
   set(r: {
@@ -106,6 +114,7 @@ const Simulation = {
     abs: Float32Array;
     validity: Uint8Array | null;
     overlay: OverlaySpec | null;
+    fields: ModelFields;
   }) {
     this.nx = r.nx;
     this.ny = r.ny;
@@ -119,6 +128,7 @@ const Simulation = {
     this.abs = buildVolumeCache(r.abs);
     this.validity = r.validity;
     this.overlay = r.overlay;
+    this.fields = r.fields;
   },
 
   /** 'phi' | 'abs' → the matching cache, or null if not yet computed. */
@@ -397,10 +407,19 @@ async function runAndRender(): Promise<void> {
     abs,
     validity,
     overlay: model.overlay ?? null,
+    fields: model.fields,
   });
 
   /* Show plots section */
   (document.getElementById("plots") as HTMLElement).style.display = "";
+
+  /* Headings track the volume on screen, not the dropdown — the two can
+     disagree, since switching model rebuilds the panel without discarding
+     the result already computed. innerHTML because these carry <sub> and
+     entity markup, and they're authored in models.ts, not user input. */
+  (["phi", "abs"] as const).forEach((suffix) => {
+    document.getElementById(`ptitle-${suffix}`)!.innerHTML = model.fields[suffix].title;
+  });
 
   /* The toggle only makes sense for a model that computed an overlay buffer
      — hide it, and reset it unchecked, for the rest rather than leaving a
@@ -809,7 +828,7 @@ document.getElementById("tab-btn-help")!.addEventListener("click", () => switchT
 function formatProbe(suffix: VolumeKind, probe: Probe): string {
   const lines = [
     `x ${probe.x.toFixed(3)}  y ${probe.y.toFixed(3)}  z ${probe.z.toFixed(3)} cm`,
-    `${SYMBOL[suffix]} = ${probe.value.toPrecision(4)} ${UNITS[suffix]}`,
+    `${Simulation.fields[suffix].symbol} = ${probe.value.toPrecision(4)} ${UNITS[suffix]}`,
   ];
   /* Only meaningful while the overlay is the thing being drawn — the codes
      grade the run, and quoting one next to a field value the user is not

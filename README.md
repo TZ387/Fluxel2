@@ -107,7 +107,17 @@ math).
 - **Kubelka-Munk** — two-flux, N-layer stack. A 1-D model: the sample is illuminated by a perfectly diffuse flux
   across the whole top face, and two counter-propagating streams (up/down) are tracked through an arbitrary
   stack of homogeneous layers, each with its own absorption, scattering, and thickness. No lateral structure —
-  the computed depth profile is broadcast across every (x, y) column. `src-tauri/src/physics/kubelka_munk.rs`.
+  the computed depth profile is broadcast across every (x, y) column.
+
+  Its plots are labelled in its own quantities rather than the other three's, because they aren't the same
+  ones: the field is I + J, the sum of the two fluxes, which for a hemispherically isotropic field is about
+  half the fluence rate Φ; and K is the Kubelka-Munk absorption coefficient, roughly 2μ<sub>a</sub>, not
+  μ<sub>a</sub>. Those two factors of two cancel, so A = K(I + J) is exactly right — integrating it through
+  the stack returns the power the R/T/A balance says was absorbed, which is the one identity here that isn't
+  true by construction, and there is a test for it. But I + J and Φ are not interchangeable, and no
+  K/S ↔ μ<sub>a</sub>/μ<sub>s</sub>′ conversion is applied anywhere. L<sub>x</sub>/L<sub>y</sub> are
+  illumination rather than a viewing window here too: the incident power is spread over the lit face, so
+  widening it dims the whole field. `src-tauri/src/physics/kubelka_munk.rs`.
 - **Liemert & Kienle (2010)** — N-layer, point-source diffusion. The combination FPW1992 and Kubelka-Munk
   each stop short of: a point/pencil beam through a stack of homogeneous layers (1 to 8 of them), solved via a
   Fourier-Bessel series (zeros of J0) on a finite cylinder rather than FPW1992's closed-form shortcut, since

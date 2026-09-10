@@ -3,6 +3,42 @@
 //! Ported from the original TypeScript at src/physics/kubelkaMunk.ts (now
 //! removed — this is the single source of truth for the physics). See that
 //! file's git history for the full derivation notes behind each equation.
+//!
+//! # What the two volumes are, and why they aren't the other models' two
+//!
+//! The field this model reports is I + J, the sum of its downward and upward
+//! diffuse fluxes. That is not the fluence rate fpw1992.rs,
+//! liemert_kienle.rs and monte_carlo.rs report: for a hemispherically
+//! isotropic field the fluence rate is about 2(I + J). Nor is K the mu_a
+//! those models take — for a diffuse field K is about 2*mu_a. The two
+//! factors of two cancel in the absorbed density, which is why
+//!
+//!     A = K (I + J)
+//!
+//! is exactly right even though I + J is only half a fluence rate. It falls
+//! out of the two-flux equations themselves: for the net flux F = I - J,
+//! dF/dz = -K(I + J), so integrating A through the stack gives
+//! I0 (1 - R - T) — the power the R/T/A balance says was absorbed, reached
+//! without touching that balance. `the_volume_carries_the_absorbed_power`
+//! pins it, and it is the one identity here that isn't true by construction
+//! (a_total is *defined* as 1 - R - T).
+//!
+//! So: rescaling one of that pair without the other breaks it. If these
+//! numbers ever need to be read against the other three models', the
+//! conversion belongs at the K/S <-> mu_a/mu_s' boundary, applied to the
+//! inputs — not to the outputs here. This file applies none, and the UI
+//! labels the parameters K and S and the plots I + J, so nothing claims
+//! otherwise.
+//!
+//! # L_x and L_y are illumination, not a window
+//!
+//! Also unlike every other model here, where they only decide how much of
+//! the answer you are shown. This one is lit by a diffuse flux spread evenly
+//! over the whole top face, so the incident irradiance is i0 = P0/(L_x*L_y)
+//! and doubling L_x halves the field everywhere. N_x and N_y really are pure
+//! display: the profile is one-dimensional and compute_volume broadcasts it
+//! across every column, so they multiply the volume's size without adding
+//! anything to it.
 
 use crate::physics::validity::{require, ValidityResult};
 use serde::{Deserialize, Serialize};
