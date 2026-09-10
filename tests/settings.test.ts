@@ -181,6 +181,15 @@ inCase("select parameter off its options");
   expect(loaded.warnings.some((w) => w.includes("beam_profile")), "no warning naming it");
 }
 
+/* A dropdown value that has since been renamed follows the rename instead of
+   resetting the control — the beam pattern's straight line became a cross. */
+inCase("select parameter under a superseded name");
+{
+  const loaded = loadFpw({ ...FPW, beam_pattern: "line" });
+  expect(loaded.params.beam_pattern === "cross", `beam_pattern came back as ${loaded.params.beam_pattern}`);
+  expect(loaded.warnings.some((w) => w.includes("beam_pattern")), "the substitution went unmentioned");
+}
+
 /* A file from a later build that added a parameter still has to open here. */
 inCase("unknown keys");
 {

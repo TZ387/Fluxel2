@@ -49,6 +49,11 @@ export interface SliderParamDef {
 export interface SelectOption {
   value: string;
   label: string;
+  /** Values this option used to be stored under, so a settings file written
+      before a rename still selects it rather than silently falling back to
+      the default (settings.ts). The panel never writes an alias back — the
+      next save records the current name. */
+  aliases?: string[];
 }
 
 export interface SelectParamDef {
@@ -98,10 +103,34 @@ export interface OverlaySpec {
   legend: [string, string, string];
 }
 
+/** The voxel box a model's volume comes back on. Not always the parameters
+    themselves: Monte Carlo is parameterized radially and derives its box (see
+    `grid` below), so everything downstream of a run — sizing the IPC buffer
+    (compute.ts), labelling the axes, the slice sliders, the .npy export —
+    asks the model rather than reading p.nx/p.lx directly. */
+export interface GridDims {
+  nx: number;
+  ny: number;
+  nz: number;
+  lx: number;
+  ly: number;
+}
+
+/** What the three Cartesian models do: the box *is* the parameters. */
+const cartesianGrid = (p: Record<string, any>): GridDims => ({
+  nx: p.nx,
+  ny: p.ny,
+  nz: p.nz,
+  lx: p.lx,
+  ly: p.ly,
+});
+
 export interface ModelDef<D = any> {
   label: string;
   /** Rust command prefix — invokes `<command>_summary` and `<command>_volume`. */
   command: string;
+  /** The voxel box this model's params work out to. */
+  grid: (params: Record<string, any>) => GridDims;
   summaryLine: (derived: D, dt: string) => string;
   /** Heading above this model's validity warnings. Per-model because the
       models don't share an approximation: two are diffusion, one is two-flux,
@@ -160,19 +189,24 @@ const BEAM_PATTERN_PARAM: SelectParamDef = {
   id: "beam_pattern", label: "Beam pattern", kind: "select", def: "single",
   options: [
     { value: "single", label: "Single spot" },
-    { value: "line", label: "Line scan" },
+    /* Two scanned rows at right angles rather than one. Every model here
+       builds a pattern by superposing one axisymmetric kernel per spot, so a
+       cross — which is at least symmetric under a quarter turn — sits closer
+       to what they assume than a bare line does. `aliases` keeps files
+       written when this was a plain line scan loading. */
+    { value: "cross", label: "Cross scan (two perpendicular lines)", aliases: ["line"] },
     { value: "grid", label: "Grid (fractional array)" },
   ],
 };
 const PATTERN_COUNT_PARAM: SliderParamDef = {
-  id: "pattern_count", label: "Spots — along the line, or per side of the grid",
+  id: "pattern_count", label: "Spots — per arm of the cross, or per side of the grid",
   min: 2, max: 16, step: 1, def: 5, fmt: fmt0,
-  showIf: { id: "beam_pattern", oneOf: ["line", "grid"] },
+  showIf: { id: "beam_pattern", oneOf: ["cross", "grid"] },
 };
 const PATTERN_SPACING_PARAM: SliderParamDef = {
   id: "pattern_spacing", label: "Spot spacing (pitch) [cm]",
   min: 0.01, max: 1, step: 0.001, def: 0.2, fmt: fmt3,
-  showIf: { id: "beam_pattern", oneOf: ["line", "grid"] },
+  showIf: { id: "beam_pattern", oneOf: ["cross", "grid"] },
 };
 
 /* FPW1992 and Liemert-Kienle grade the same thing the same way, so the
@@ -225,6 +259,8 @@ export interface McLayerDerived {
 export interface MonteCarloDerived {
   layers: McLayerDerived[];
   Lz: number;
+  /** How far from the beam axis the answer reaches, N_r * Δr [cm]. */
+  radius: number;
   spots: number;
   photons: number;
   specular: number;
@@ -267,13 +303,23 @@ export const MODELS: Record<string, ModelDef> = {
      switching between the two compares like with like: the same layered
      slab, solved exactly here and by the diffusion approximation there. */
   monteCarlo: {
-    label: "Monte Carlo — N-layer photon transport (reference)",
+    label: "2-D Monte Carlo (radial symmetry) — N-layer photon transport (reference)",
     command: "monte_carlo",
+    /* Radial, not Cartesian: N_r rings of width Δr reach R = N_r·Δr from the
+       beam axis, and the volume is drawn in the square box that circle fits
+       inside, at one voxel per ring. Has to agree exactly with
+       monte_carlo.rs's display_grid — compute.ts checks that it did, by
+       measuring the buffer the run came back in. */
+    grid: (p) => {
+      const nr = Math.max(1, p.nr as number);
+      const width = 2 * nr * (p.dr as number);
+      return { nx: 2 * nr, ny: 2 * nr, nz: Math.max(1, p.nz as number), lx: width, ly: width };
+    },
     progress: true,
     summaryLine: (derived: MonteCarloDerived, dt: string) =>
       `Done in ${dt} ms — ${fmtCount(derived.photons)} photons | ` +
       `${derived.layers.length} layer${derived.layers.length === 1 ? "" : "s"} | ` +
-      `L<sub>z</sub> = ${num(derived.Lz, 3)} cm | ` +
+      `L<sub>z</sub> = ${num(derived.Lz, 3)} cm | R = ${num(derived.radius, 3)} cm | ` +
       `μ<sub>s</sub>' = ${derived.layers.map((l) => num(l.musp, 2)).join(", ")} cm⁻¹ | ` +
       `specular loss = ${num(100 * derived.specular, 1)}% of P<sub>0</sub>` +
       spotsSuffix(derived.spots),
@@ -293,7 +339,7 @@ export const MODELS: Record<string, ModelDef> = {
       LAYER_PARAM_GROUP,
       {
         id: "beam",
-        title: "Beam, grid & photon budget",
+        title: "Beam, (r, z) grid & photon budget",
         params: [
           { id: "p0", label: "P<sub>0</sub> input power [W]", min: 0.01, max: 10, step: 0.001, def: 1.0, fmt: fmt3 },
           BEAM_PROFILE_PARAM,
@@ -309,10 +355,16 @@ export const MODELS: Record<string, ModelDef> = {
              monte_carlo.rs's perf test); the value box takes anything typed,
              including past the slider's own range. */
           { id: "photons_k", label: "Photon budget ×10³", min: 1, max: 2000, step: 1, def: 100, fmt: fmt0 },
-          { id: "lx", label: "L<sub>x</sub> [cm]", min: 0.5, max: 6, step: 0.001, def: 2, fmt: fmt3 },
-          { id: "ly", label: "L<sub>y</sub> [cm]", min: 0.5, max: 6, step: 0.001, def: 2, fmt: fmt3 },
-          { id: "nx", label: "N<sub>x</sub> voxels", min: 10, max: 400, step: 1, def: 40, fmt: fmt0 },
-          { id: "ny", label: "N<sub>y</sub> voxels", min: 10, max: 400, step: 1, def: 40, fmt: fmt0 },
+          /* The grid this model actually has: rings and depth bins, no x and
+             no y. Δr is the resolution the answer exists at laterally, N_r
+             how many rings of it — so the pair fixes both the detail and the
+             reach (R = N_r·Δr, reported in the summary line), and the two
+             read directly as "how fine" and "how far" instead of being
+             tangled together the way L_x with N_x is. The defaults are the
+             other models' 40 × 40 × 40 over 2 × 2 cm, so switching between
+             them still compares like with like. */
+          { id: "nr", label: "N<sub>r</sub> rings (radial)", min: 5, max: 200, step: 1, def: 20, fmt: fmt0 },
+          { id: "dr", label: "Δr radial ring width [cm]", min: 0.002, max: 0.2, step: 0.001, def: 0.05, fmt: fmt3 },
           { id: "nz", label: "N<sub>z</sub> voxels (through depth)", min: 10, max: 400, step: 1, def: 40, fmt: fmt0 },
         ],
       },
@@ -322,6 +374,7 @@ export const MODELS: Record<string, ModelDef> = {
   liemertKienle: {
     label: "Liemert & Kienle (2010) — N-layer, point-source diffusion",
     command: "liemert_kienle",
+    grid: cartesianGrid,
     summaryLine: (derived: LiemertKienleDerived, dt: string) =>
       `Done in ${dt} ms — ${derived.layers.length} layer${derived.layers.length === 1 ? "" : "s"} | ` +
       `z<sub>0</sub> = ${num(derived.z0, 3)} cm | L<sub>z</sub> = ${num(derived.Lz, 3)} cm | ` +
@@ -362,6 +415,7 @@ export const MODELS: Record<string, ModelDef> = {
   fpw1992: {
     label: "Farrell, Patterson & Wilson (1992) — pencil beam, semi-infinite slab",
     command: "fpw1992",
+    grid: cartesianGrid,
     summaryLine: (derived: Fpw1992Derived, dt: string) =>
       `Done in ${dt} ms — μ<sub>s</sub>' = ${num(derived.musp, 3)} cm⁻¹ | ` +
       `D = ${num(derived.D, 4)} cm | μ<sub>eff</sub> = ${num(derived.mueff, 4)} cm⁻¹ | ` +
@@ -405,6 +459,7 @@ export const MODELS: Record<string, ModelDef> = {
   kubelkaMunk: {
     label: "Kubelka–Munk — two-flux, N-layer stack (diffuse illumination)",
     command: "kubelka_munk",
+    grid: cartesianGrid,
     summaryLine: (derived: KubelkaMunkDerived, dt: string) =>
       `Done in ${dt} ms — R = ${num(derived.R_total, 4)} | ` +
       `T = ${num(derived.T_total, 4)} | absorbed = ${num(derived.A_total, 4)} | ` +

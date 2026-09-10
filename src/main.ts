@@ -368,7 +368,7 @@ async function runAndRender(): Promise<void> {
     : undefined;
 
   const t0 = performance.now();
-  const { phi, abs, validity, derived, valid, reasons } = await runModel(model.command, p, onProgress);
+  const { phi, abs, validity, derived, valid, reasons } = await runModel(model, p, onProgress);
   const dt = (performance.now() - t0).toFixed(1);
 
   /* The grid's depth is an input for the one homogeneous model and a
@@ -386,12 +386,11 @@ async function runAndRender(): Promise<void> {
     }
   }
 
+  /* The lateral grid comes from the model, not straight from the panel:
+     Monte Carlo is parameterized in rings and derives its voxel box from
+     them (models.ts's `grid`). */
   Simulation.set({
-    nx: p.nx,
-    ny: p.ny,
-    nz: p.nz,
-    lx: p.lx,
-    ly: p.ly,
+    ...model.grid(p),
     lz,
     interfaces,
     phi,

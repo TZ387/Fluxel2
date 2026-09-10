@@ -100,7 +100,7 @@ pub struct LiemertKienleParams {
     /// sigma (Gaussian) or radius (flattop) in cm, ignored for "pencil".
     pub beam_profile: String,
     pub beam_width: f64,
-    /// "single" | "line" | "grid" — see beam.rs. `pattern_count` is spots
+    /// "single" | "cross" | "grid" — see beam.rs. `pattern_count` is spots
     /// along the line or per side of the grid, `pattern_spacing` the pitch
     /// between neighbours in cm; both ignored for "single".
     pub beam_pattern: String,
@@ -299,7 +299,7 @@ pub fn check_validity(p: &LiemertKienleParams, derived: &LiemertKienleDerived) -
 
     let beam = BeamProfile::from_params(&p.beam_profile, p.beam_width);
     let pattern = BeamPattern::from_params(&p.beam_pattern, p.pattern_count, p.pattern_spacing);
-    if let Some(reason) = beam::pattern_extent_warning(&pattern, p.lx, p.ly) {
+    if let Some(reason) = beam::pattern_extent_warning(&pattern, p.lx, p.ly, "enlarge L<sub>x</sub>/L<sub>y</sub>") {
         reasons.push(reason);
     }
     if !beam.is_pencil() {

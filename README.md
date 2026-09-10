@@ -70,8 +70,8 @@ Each model is self-contained in Rust under `src-tauri/src/physics/` — its comp
 comments with the full derivation notes are the single source of truth (see that directory, not here, for the
 math).
 
-- **Monte Carlo** — N-layer photon transport; the default, and the reference the other three are checked
-  against. Traces photon packets through the layer stack (hop by an exponentially sampled free path, deposit
+- **2-D Monte Carlo (radial symmetry)** — N-layer photon transport; the default, and the reference the other
+  three are checked against. Traces photon packets through the layer stack (hop by an exponentially sampled free path, deposit
   weight at each collision, scatter by Henyey-Greenstein, Fresnel reflect/refract at every refractive-index
   step including total internal reflection) rather than approximating the transport equation, so none of the
   restrictions the other models carry apply: a layer thinner than a mean free path, absorption comparable to
@@ -81,7 +81,12 @@ math).
 
   Every geometry it accepts is axisymmetric — flat layers, normal incidence, a radially symmetric beam — so it
   scores photons into an (r, z) grid rather than 3-D voxels, which is exactly the axisymmetric kernel the two
-  point-source diffusion models already feed to `beam.rs`. One run therefore serves any beam pattern (see
+  point-source diffusion models already feed to `beam.rs`. Its parameters are that grid: Δr is one radial
+  ring's width, N<sub>r</sub> how many rings (so the run reaches R = N<sub>r</sub>·Δr from the axis), and
+  N<sub>z</sub> divides the stack's depth — no L<sub>x</sub>/L<sub>y</sub> and no N<sub>x</sub>/N<sub>y</sub>,
+  since the simulation has no x and no y to divide up. What gets drawn is still a box, because that is what
+  the viewers draw: a square of half-width R at one voxel per ring, so the picture is at the resolution that
+  was computed. One run therefore serves any beam pattern (see
   below), and the beam *profile* costs nothing either: each packet's launch point is drawn from the profile
   instead of the kernel being convolved with it afterwards. That is what makes an in-house Monte Carlo
   affordable here — a full 3-D voxel simulation would need orders of magnitude more photons for the same
@@ -119,10 +124,18 @@ pencil to a Gaussian or flat-top (disk) profile — the finite-beam convolution 
 as a per-mode spectral factor (cheap, exact to the model's own cylinder-radius approximation); FPW1992 has no
 such series, so its convolution is a direct 2-D numerical integral over the beam footprint instead.
 
-All three point-source models (Monte Carlo included) also take a beam *pattern* — a single spot, a line (a
-scanner's row of pulses), or a square grid (a fractional handpiece's array) — sharing P0 equally between the
-spots and superposing their fields, which transport being linear makes exact. The per-spot field is the same function at every spot, just shifted, so it
-is evaluated once and reused: a 25-spot grid costs under twice a single spot, not 25 times.
+All three point-source models (Monte Carlo included) also take a beam *pattern* — a single spot, a cross (two
+scanned rows of pulses at right angles), or a square grid (a fractional handpiece's array) — sharing P0
+equally between the spots and superposing their fields, which transport being linear makes exact. The per-spot
+field is the same function at every spot, just shifted, so it is evaluated once and reused: a 25-spot grid
+costs under twice a single spot, not 25 times.
+
+Every one of those models builds a pattern out of a single radially symmetric per-spot field, which is why the
+scan is a cross rather than a bare line — a cross at least looks the same after a quarter turn. Any pattern of
+more than one spot is still not radially symmetric, and the Monte Carlo model says so in its validity
+warnings: the sum is exact all the same, but the one kernel now has to reach across the whole pattern on the
+same photon budget, and its noise overlay adds the spots' errors as if they were independent when they all
+come off that single kernel, so it reads a little optimistic where spots overlap.
 
 ## Visualisation
 
@@ -199,7 +212,8 @@ to it.
 **Export data…** writes the underlying voxel grid instead of a picture: a `.npy` array
 (`<model>-phi.npy` / `<model>-abs.npy`) plus a `<model>-phi.json` / `<model>-abs.json` sidecar of what a bare
 array can't carry — the grid it was evaluated on (`nx`/`ny`/`nz`, `lx`/`ly`/`lz` in cm, the layer interface
-depths), which field it is and its units, and the model that produced it. `.npy` rather than CSV or plain JSON
+depths; for the Monte Carlo model that is the box its N<sub>r</sub> rings of Δr work out to, not parameters
+typed in), which field it is and its units, and the model that produced it. `.npy` rather than CSV or plain JSON
 for the array itself: the largest grid this app allows is 400³ = 64 million voxels, where a text encoding runs
 to hundreds of megabytes and `.npy` is the raw float bytes plus a short header — readable with one call from
 either Python or Julia:

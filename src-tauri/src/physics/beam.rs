@@ -31,8 +31,8 @@
 //! source (a useful sanity check on the algebra).
 //!
 //! Where the beam is *aimed* is separate from its shape: a BeamPattern is a
-//! list of spot positions on the top face — one spot, a scanner's line, or
-//! a fractional handpiece's grid. A pattern's fluence is the linear sum of
+//! list of spot positions on the top face — one spot, a scanner's crossed
+//! pair of rows, or a fractional handpiece's grid. A pattern's fluence is the linear sum of
 //! its spots', each carrying an equal share of P0; since Phi_pt is the same
 //! function for every spot, only shifted, the expensive part (the series,
 //! the convolution) is still evaluated exactly once — a pattern only costs
@@ -129,19 +129,30 @@ pub struct BeamPattern {
 
 impl BeamPattern {
     /// `kind` is the UI's beam-pattern selector value; `count` is the number
-    /// of spots along a line, or per side of a grid (so a grid has count^2),
-    /// and `spacing` is the pitch between neighbours in cm. Both are ignored
-    /// for "single", and an unknown `kind` falls back to it — same reasoning
-    /// as BeamProfile::from_params.
+    /// of spots along one arm of a cross, or per side of a grid (so a grid
+    /// has count^2), and `spacing` is the pitch between neighbours in cm.
+    /// Both are ignored for "single", and an unknown `kind` falls back to it
+    /// — same reasoning as BeamProfile::from_params.
     ///
-    /// A line is what a scanner actually lays down: a row of discrete pulses,
-    /// which approximates a continuous sweep once the pitch is small next to
-    /// the beam width.
+    /// A row of discrete pulses is what a scanner actually lays down, and
+    /// approximates a continuous sweep once the pitch is small next to the
+    /// beam width. It is offered as a *cross* — two such rows at right
+    /// angles — rather than a single row, because every model here builds a
+    /// pattern out of one axisymmetric kernel, and a cross is the closer of
+    /// the two to axisymmetric (monte_carlo.rs warns about what is left of
+    /// the difference). The arms share the centre spot when `count` is odd,
+    /// so a cross has 2*count spots for an even count and 2*count - 1 for an
+    /// odd one. "line" is accepted as the name this used to go by, so
+    /// settings files written before the change still load.
     pub fn from_params(kind: &str, count: usize, spacing: f64) -> BeamPattern {
         let n = count.max(1);
         let offset = |i: usize| (i as f64 - (n - 1) as f64 / 2.0) * spacing;
         let spots = match kind {
-            "line" => (0..n).map(|i| (offset(i), 0.0)).collect(),
+            "cross" | "line" => {
+                let mut spots: Vec<(f64, f64)> = (0..n).map(|i| (offset(i), 0.0)).collect();
+                spots.extend((0..n).map(|i| (0.0, offset(i))).filter(|&(_, y)| y != 0.0));
+                spots
+            }
             "grid" => (0..n).flat_map(|iy| (0..n).map(move |ix| (offset(ix), offset(iy)))).collect(),
             _ => vec![(0.0, 0.0)],
         };
@@ -199,9 +210,12 @@ pub fn max_kernel_radius(lx: f64, ly: f64, pattern: &BeamPattern) -> f64 {
     (hx + lx / 2.0).hypot(hy + ly / 2.0)
 }
 
-/// Shared by both point-source models' check_validity: spots outside the
-/// grid's footprint still light it up, but the user can't see them.
-pub fn pattern_extent_warning(pattern: &BeamPattern, lx: f64, ly: f64) -> Option<String> {
+/// Shared by every point-source model's check_validity: spots outside the
+/// grid's footprint still light it up, but the user can't see them. `widen`
+/// names the control that would fix it, since the models no longer agree on
+/// what sets their lateral extent — L<sub>x</sub>/L<sub>y</sub> for the
+/// diffusion models, N<sub>r</sub>/Δr for the axisymmetric Monte Carlo.
+pub fn pattern_extent_warning(pattern: &BeamPattern, lx: f64, ly: f64, widen: &str) -> Option<String> {
     let (hx, hy) = pattern.half_extent();
     if hx <= lx / 2.0 && hy <= ly / 2.0 {
         return None;
@@ -209,9 +223,8 @@ pub fn pattern_extent_warning(pattern: &BeamPattern, lx: f64, ly: f64) -> Option
     Some(format!(
         "the beam pattern reaches {:.3} x {:.3} cm from the centre, past the grid's half-width \
          ({:.3} x {:.3} cm) — the spots that fall outside still deposit light into the volume, \
-         but you can't see them; enlarge L<sub>x</sub>/L<sub>y</sub>, or reduce the spot \
-         spacing or count",
-        hx, hy, lx / 2.0, ly / 2.0
+         but you can't see them; {}, or reduce the spot spacing or count",
+        hx, hy, lx / 2.0, ly / 2.0, widen
     ))
 }
 
@@ -383,22 +396,46 @@ mod tests {
     #[test]
     fn patterns_are_centred_and_counted() {
         assert_eq!(BeamPattern::from_params("single", 5, 0.2).len(), 1);
-        assert_eq!(BeamPattern::from_params("line", 5, 0.2).len(), 5);
         assert_eq!(BeamPattern::from_params("grid", 4, 0.2).len(), 16);
         assert_eq!(BeamPattern::from_params("nonsense", 4, 0.2).len(), 1);
 
+        // Two arms of `count`, sharing the centre spot only when there is
+        // one to share — i.e. when the count is odd. "line" is the old name
+        // for the same thing, so a settings file written under it still
+        // gives a cross.
+        assert_eq!(BeamPattern::from_params("cross", 5, 0.2).len(), 9);
+        assert_eq!(BeamPattern::from_params("cross", 4, 0.2).len(), 8);
+        assert_eq!(BeamPattern::from_params("line", 5, 0.2).len(), 9);
+
         // An even count straddles the centre, an odd one sits on it; either
-        // way the pattern is centred, so its spots sum to zero.
+        // way the pattern is centred, so its spots sum to zero on both axes.
         for n in [3usize, 4] {
-            let line = BeamPattern::from_params("line", n, 0.2);
-            let sum: f64 = line.spots.iter().map(|&(x, _)| x).sum();
-            assert!(sum.abs() < 1e-12, "n={n}: spots off-centre by {sum}");
+            let cross = BeamPattern::from_params("cross", n, 0.2);
+            let sx: f64 = cross.spots.iter().map(|&(x, _)| x).sum();
+            let sy: f64 = cross.spots.iter().map(|&(_, y)| y).sum();
+            assert!(sx.abs() < 1e-12 && sy.abs() < 1e-12, "n={n}: spots off-centre by {sx}, {sy}");
         }
 
-        // (n-1)/2 pitches either side of centre, and a line has no y extent.
-        let (hx, hy) = BeamPattern::from_params("line", 4, 0.2).half_extent();
-        assert!((hx - 0.3).abs() < 1e-12 && hy == 0.0, "line: {hx}, {hy}");
+        // (n-1)/2 pitches either side of centre, on both axes — the arms are
+        // the same length, which is the whole point of crossing them.
+        let (hx, hy) = BeamPattern::from_params("cross", 4, 0.2).half_extent();
+        assert!((hx - 0.3).abs() < 1e-12 && (hy - 0.3).abs() < 1e-12, "cross: {hx}, {hy}");
         assert_eq!(BeamPattern::from_params("grid", 3, 0.5).half_extent(), (0.5, 0.5));
+    }
+
+    /// The cross is only worth having over a single row if it really is more
+    /// symmetric, so: its spots are invariant under swapping x and y.
+    #[test]
+    fn a_cross_is_symmetric_under_a_quarter_turn() {
+        for n in [3usize, 4, 5] {
+            let cross = BeamPattern::from_params("cross", n, 0.25);
+            for &(x, y) in cross.spots() {
+                assert!(
+                    cross.spots().iter().any(|&(a, b)| (a - y).abs() < 1e-12 && (b - x).abs() < 1e-12),
+                    "n={n}: ({x}, {y}) has no mirror across the diagonal"
+                );
+            }
+        }
     }
 
     #[test]
@@ -406,9 +443,10 @@ mod tests {
         // Single centred spot: half the grid's diagonal, as before patterns.
         let single = max_kernel_radius(2.0, 2.0, &BeamPattern::single());
         assert!((single - 2f64.sqrt()).abs() < 1e-12, "got {single}");
-        // A spot 0.5 off-centre in x is that much further from the far corner.
-        let line = max_kernel_radius(2.0, 2.0, &BeamPattern::from_params("line", 2, 1.0));
-        assert!((line - 1.5f64.hypot(1.0)).abs() < 1e-12, "got {line}");
+        // A cross of pitch 1.0 reaches 0.5 off-centre on both axes, so its
+        // furthest spot is that much further from the far corner in each.
+        let cross = max_kernel_radius(2.0, 2.0, &BeamPattern::from_params("cross", 2, 1.0));
+        assert!((cross - 1.5f64.hypot(1.5)).abs() < 1e-12, "got {cross}");
     }
 
     /// Zero pitch stacks every spot on the axis, so splitting P0 between them
@@ -433,7 +471,7 @@ mod tests {
     fn sample_axisymmetric_volume_superposes_spots() {
         let kernel = |rho: f64, z: f64| 1.0 + 0.5 * rho + z;
         let grid = test_grid();
-        let pattern = BeamPattern::from_params("line", 3, 0.3);
+        let pattern = BeamPattern::from_params("cross", 3, 0.3);
         let p0 = 2.0;
         let (phi, abs) = sample_axisymmetric_volume(&grid, &pattern, p0, |_z| 0.25, kernel);
 
@@ -459,10 +497,11 @@ mod tests {
 
     #[test]
     fn pattern_extent_warning_fires_only_outside_the_grid() {
-        let inside = BeamPattern::from_params("line", 3, 0.2); // reaches 0.2 cm
-        assert!(pattern_extent_warning(&inside, 2.0, 2.0).is_none());
-        let outside = BeamPattern::from_params("line", 3, 2.0); // reaches 2.0 cm
-        assert!(pattern_extent_warning(&outside, 2.0, 2.0).is_some());
+        let inside = BeamPattern::from_params("cross", 3, 0.2); // reaches 0.2 cm
+        assert!(pattern_extent_warning(&inside, 2.0, 2.0, "widen it").is_none());
+        let outside = BeamPattern::from_params("cross", 3, 2.0); // reaches 2.0 cm
+        let warning = pattern_extent_warning(&outside, 2.0, 2.0, "widen it").expect("no warning");
+        assert!(warning.contains("widen it"), "the caller's own advice is missing: {warning}");
     }
 
     #[test]

@@ -33,6 +33,22 @@
 //! the incidence, warp an interface, or embed an inclusion, and the symmetry
 //! is gone and a full 3-D grid becomes necessary.
 //!
+//! This is why the model is parameterized in (N_r, dr, N_z) rather than the
+//! diffusion models' (L_x, L_y, N_x, N_y, N_z): the simulation has no x and
+//! no y to divide up, and offering three independent lateral knobs for a
+//! two-dimensional answer only invited pairs of them that mean nothing. dr
+//! is the width of one radial ring — the resolution the answer actually
+//! exists at — and N_r is how many of them, so the result reaches
+//! R = N_r * dr from the axis.
+//!
+//! What the viewer draws is still a Cartesian box, since that is the only
+//! thing the two renderers know how to draw and the only shape the other
+//! three models produce. display_grid is the one place that mapping lives:
+//! a square footprint of half-width R, divided into voxels exactly dr
+//! across, so a display voxel and a tally ring are the same size and the
+//! picture shows the resolution that was computed rather than an
+//! interpolated version of it.
+//!
 //! # Noise, and the overlay
 //!
 //! A Monte Carlo answer is an estimate with an error bar, so this model
@@ -152,7 +168,7 @@ pub struct MonteCarloParams {
     /// here it is the distribution each photon's launch point is drawn from.
     pub beam_profile: String,
     pub beam_width: f64,
-    /// "single" | "line" | "grid" — see beam.rs.
+    /// "single" | "cross" | "grid" — see beam.rs.
     pub beam_pattern: String,
     pub pattern_count: usize,
     pub pattern_spacing: f64,
@@ -160,10 +176,12 @@ pub struct MonteCarloParams {
     /// spans four decades, which no linear slider handles gracefully in
     /// units of one photon.
     pub photons_k: f64,
-    pub lx: f64,
-    pub ly: f64,
-    pub nx: usize,
-    pub ny: usize,
+    /// Rings in the radial direction. With `dr` this sets how far from the
+    /// beam axis the answer is reported: R = n_r * dr (see display_grid).
+    pub nr: usize,
+    /// Width of one radial ring [cm] — the lateral resolution of both the
+    /// tally and the volume built from it.
+    pub dr: f64,
     pub nz: usize,
 }
 
@@ -187,6 +205,10 @@ pub struct MonteCarloDerived {
     /// Total stack depth, which is also the grid's depth here.
     #[serde(rename = "Lz")]
     pub lz: f64,
+    /// How far from the beam axis the answer reaches, N_r * dr [cm].
+    /// Reported because the two parameters that set it are a resolution and
+    /// a count, so the extent they add up to is worth saying outright.
+    pub radius: f64,
     /// How many spots the chosen beam pattern works out to.
     pub spots: usize,
     /// Photons the run will actually trace (the budget rounded to a whole
@@ -195,8 +217,11 @@ pub struct MonteCarloDerived {
     /// Fraction of P0 reflected specularly off the top surface, before any
     /// scattering — lost to the tissue no matter how the rest is traced.
     pub specular: f64,
-    /// Radial bins in the (r, z) kernel grid, for a sense of what the photon
-    /// budget is being spread over.
+    /// Radial bins the run actually tallies onto, for a sense of what the
+    /// photon budget is being spread over. Equal to the `nr` asked for when
+    /// the beam is a single spot filling the reported radius, and larger
+    /// when the grid's corners or an off-axis beam pattern put a displayed
+    /// voxel further from a spot than R (see radial_grid).
     pub n_r: usize,
 }
 
@@ -476,20 +501,43 @@ impl TallyGrid {
     }
 }
 
-/// The (r, z) grid a run tallies onto, chosen to line up with what
-/// beam::sample_axisymmetric_volume will ask for: `dr` matches the radial
-/// step that function samples the kernel at, and the reach covers the whole
-/// beam pattern, since a voxel in one corner can be far from a spot in the
-/// other. Depth bins are the voxel grid's own, so no depth interpolation is
-/// ever needed.
-fn radial_grid(p: &MonteCarloParams, pattern: &BeamPattern, lz: f64) -> TallyGrid {
-    let reach = beam::max_kernel_radius(p.lx, p.ly, pattern) * 1.0001;
-    let dr = beam::max_kernel_radius(p.lx, p.ly, &BeamPattern::single()) * 1.0001
-        / (p.nx.max(p.ny).max(2) - 1) as f64;
+/// The Cartesian voxel box the (r, z) answer is drawn in — the one place
+/// the model's own (N_r, dr, N_z) parameterization is turned into the shape
+/// both renderers and the other three models speak (see this module's doc
+/// comment for why the two differ at all).
+///
+/// A square footprint of half-width R = N_r * dr, cut into voxels exactly dr
+/// across, so N_x = N_y = 2*N_r. The frontend has to size the IPC buffer
+/// before it can read it, so it works the same mapping out for itself —
+/// `grid` in src/models.ts. Change one and change the other; compute.ts
+/// checks the two agreed by measuring the buffer it got back.
+fn display_grid(p: &MonteCarloParams, lz: f64) -> Grid {
+    let n_r = p.nr.max(1);
     let n_z = p.nz.max(1);
-    let wanted = if dr > 0.0 { (reach / dr).ceil() as usize + 1 } else { 1 };
-    let n_r = wanted.clamp(1, (MAX_TALLY_BINS / n_z).max(1));
-    TallyGrid::new(n_r, n_z, dr.max(f64::MIN_POSITIVE), lz / n_z as f64)
+    let width = 2.0 * n_r as f64 * p.dr;
+    Grid { lx: width, ly: width, nx: 2 * n_r, ny: 2 * n_r, nz: n_z, dz: lz / n_z as f64 }
+}
+
+/// The (r, z) grid a run tallies onto. `dr` is the ring width asked for, and
+/// the reach covers every displayed voxel: the box's own corners sit at
+/// R*sqrt(2), and an off-axis beam pattern puts them further still from the
+/// spot they are measured against, since a voxel in one corner can be far
+/// from a spot in the other. So n_r is generally larger than the parameter
+/// of the same name — the extra rings are what fills in the corners, not
+/// extra resolution. Depth bins are the voxel grid's own, so no depth
+/// interpolation is ever needed.
+fn radial_grid(p: &MonteCarloParams, pattern: &BeamPattern, lz: f64) -> TallyGrid {
+    let grid = display_grid(p, lz);
+    let reach = beam::max_kernel_radius(grid.lx, grid.ly, pattern) * 1.0001;
+    let dr = p.dr.max(f64::MIN_POSITIVE);
+    let n_z = grid.nz;
+    // Capped before the cast, not after: a dr of zero makes the quotient
+    // infinite, and an infinite (or NaN) float-to-integer cast saturates
+    // rather than erroring, so the `+ 1` below would be the thing that
+    // finally panicked.
+    let cap = (MAX_TALLY_BINS / n_z).max(1);
+    let wanted = (reach / dr).ceil().min(cap as f64) as usize + 1;
+    TallyGrid::new(wanted.clamp(1, cap), n_z, dr, lz / n_z as f64)
 }
 
 /* ================================================================
@@ -890,6 +938,7 @@ pub fn derived(p: &MonteCarloParams) -> MonteCarloDerived {
     MonteCarloDerived {
         layers,
         lz,
+        radius: p.nr.max(1) as f64 * p.dr,
         spots: pattern.len(),
         photons: photon_budget(p).0,
         specular,
@@ -915,29 +964,54 @@ pub fn check_validity(p: &MonteCarloParams, derived: &MonteCarloDerived) -> Vali
         require(&mut reasons, l.thickness > 0.0, &at("thickness"), "greater than 0", l.thickness);
     }
     require(&mut reasons, p.p0 > 0.0, "P<sub>0</sub>", "greater than 0", p.p0);
-    let min_extent = p.lx.min(p.ly);
-    require(&mut reasons, min_extent > 0.0, "the smaller of L<sub>x</sub>, L<sub>y</sub>", "greater than 0", min_extent);
+    require(&mut reasons, p.dr > 0.0, "Δr ring width", "greater than 0", p.dr);
+    require(&mut reasons, p.nr >= 1, "N<sub>r</sub>", "at least 1", p.nr as f64);
     require(&mut reasons, p.photons_k > 0.0, "photon budget", "greater than 0", p.photons_k);
     if !reasons.is_empty() {
         return ValidityResult { valid: false, reasons };
     }
 
     let pattern = BeamPattern::from_params(&p.beam_pattern, p.pattern_count, p.pattern_spacing);
-    if let Some(reason) = beam::pattern_extent_warning(&pattern, p.lx, p.ly) {
+    let box_grid = display_grid(p, derived.lz);
+    if let Some(reason) =
+        beam::pattern_extent_warning(&pattern, box_grid.lx, box_grid.ly, "raise N<sub>r</sub> or Δr")
+    {
         reasons.push(reason);
+    }
+
+    // The one thing this model assumes, said out loud when the beam breaks
+    // it. Not an error: the slab is laterally uniform, so a pattern really
+    // is one shifted copy of the same kernel per spot and the superposition
+    // is exact — what a multi-spot pattern costs is that the single kernel
+    // now has to cover the whole pattern's reach on the same photon budget,
+    // and that the noise overlay treats the spots' errors as independent
+    // when they are all read off that one kernel, so it reads a little
+    // optimistic where spots overlap.
+    if !pattern.is_single() {
+        reasons.push(format!(
+            "the beam pattern's {} spots are not radially symmetric, and this model is: it traces \
+             one axisymmetric (r, z) kernel and superposes a shifted copy of it per spot. The sum \
+             itself is exact — the layers are flat and uniform, so every spot really does see the \
+             same kernel — but that one kernel now has to reach across the whole pattern on the \
+             same photon budget, and the noise overlay adds the spots' errors as if they were \
+             independent when they all come off it, so it reads optimistic where spots overlap. \
+             Read the overlay, and treat a wide pattern as needing more photons than a single spot \
+             would",
+            pattern.len()
+        ));
     }
 
     // Every photon's track is spread over the whole (r, z) grid, so there is
     // no clean photons-per-bin figure — but a budget below a few photons per
     // bin cannot produce a usable kernel however the tracks fall.
-    let bins = derived.n_r * p.nz;
+    let bins = derived.n_r * box_grid.nz;
     let per_bin = derived.photons as f64 / bins as f64;
     if per_bin < 20.0 {
         reasons.push(format!(
             "{} photons over an {} x {} (r, z) kernel grid is only {:.1} per bin — expect a visibly \
-             noisy volume. Raise the photon budget, or coarsen N<sub>x</sub>/N<sub>y</sub>/N<sub>z</sub>. \
+             noisy volume. Raise the photon budget, or widen Δr and coarsen N<sub>z</sub>. \
              Switch on the noise overlay to see which voxels are actually affected",
-            derived.photons, derived.n_r, p.nz, per_bin
+            derived.photons, derived.n_r, box_grid.nz, per_bin
         ));
     }
 
@@ -947,13 +1021,13 @@ pub fn check_validity(p: &MonteCarloParams, derived: &MonteCarloDerived) -> Vali
     // is asking for its far field to be sampled by almost nothing.
     let l1 = &p.layers[0];
     let mueff = (3.0 * l1.mua * (l1.mua + l1.mus * (1.0 - l1.g))).sqrt();
-    let reach = beam::max_kernel_radius(p.lx, p.ly, &pattern);
+    let reach = beam::max_kernel_radius(box_grid.lx, box_grid.ly, &pattern);
     if reach * mueff > 15.0 {
         reasons.push(format!(
             "the kernel has to reach {:.2} cm, about {:.0} penetration depths (1/μ<sub>eff</sub> = \
              {:.3} cm) — fluence out there is some 10<sup>{:.0}</sup> times below the peak, and \
-             hardly any photon gets that far, so the volume's outskirts will be noise. Shrink \
-             L<sub>x</sub>/L<sub>y</sub> or the spot spacing, or accept that only the bright \
+             hardly any photon gets that far, so the volume's outskirts will be noise. Lower \
+             N<sub>r</sub>/Δr or the spot spacing, or accept that only the bright \
              region is meaningful",
             reach, reach * mueff, 1.0 / mueff, reach * mueff / 2.303
         ));
@@ -980,15 +1054,14 @@ pub fn check_validity(p: &MonteCarloParams, derived: &MonteCarloDerived) -> Vali
 
     // The innermost radial bin is an area average over 0 <= r < dr, and a
     // pencil beam's fluence varies fastest exactly there.
-    let grid = radial_grid(p, &pattern, derived.lz);
     let mfp_transport = 1.0 / (l1.mua + l1.mus * (1.0 - l1.g));
-    if BeamProfile::from_params(&p.beam_profile, p.beam_width).is_pencil() && grid.dr > mfp_transport {
+    if BeamProfile::from_params(&p.beam_profile, p.beam_width).is_pencil() && p.dr > mfp_transport {
         reasons.push(format!(
-            "the radial bin width ({:.3} cm) is wider than layer 1's transport mean free path \
+            "the radial ring width Δr ({:.3} cm) is wider than layer 1's transport mean free path \
              ({:.3} cm), so the on-axis peak of an idealised pencil beam is averaged away over \
-             the innermost bin. Raise N<sub>x</sub>/N<sub>y</sub>, shrink \
-             L<sub>x</sub>/L<sub>y</sub>, or use a beam profile with a real width",
-            grid.dr, mfp_transport
+             the innermost ring. Narrow Δr (raising N<sub>r</sub> to keep the same reach), or use \
+             a beam profile with a real width",
+            p.dr, mfp_transport
         ));
     }
 
@@ -1025,14 +1098,7 @@ fn compute_volume_with(
     let stack = Stack::new(p);
     let run = run_mc(p, &stack, &beam_profile, &pattern, SEED, workers, progress);
 
-    let grid = Grid {
-        lx: p.lx,
-        ly: p.ly,
-        nx: p.nx,
-        ny: p.ny,
-        nz: p.nz,
-        dz: stack.lz / p.nz as f64,
-    };
+    let grid = display_grid(p, stack.lz);
     let (phi, abs) = beam::sample_axisymmetric_volume(
         &grid,
         &pattern,
@@ -1040,7 +1106,7 @@ fn compute_volume_with(
         |z| stack.layers[stack.layer_at(z)].mua,
         |rho, z| run.grid.lookup(&run.phi, rho, z),
     );
-    let codes = noise_codes(p, &pattern, &run, &phi);
+    let codes = noise_codes(&grid, p.p0, &pattern, &run, &phi);
     (phi, abs, codes)
 }
 
@@ -1053,23 +1119,24 @@ fn compute_volume_with(
 /// itself is. Structured like sample_axisymmetric_volume's own loop, so it
 /// costs one more pass of the same order, not a multiple.
 fn noise_codes(
-    p: &MonteCarloParams,
+    grid: &Grid,
+    p0: f64,
     pattern: &BeamPattern,
     run: &McRun,
     phi: &[f32],
 ) -> Vec<u8> {
-    let (nx, ny, nz) = (p.nx, p.ny, p.nz);
-    let dx = p.lx / nx as f64;
-    let dy = p.ly / ny as f64;
-    let share = p.p0 / pattern.len() as f64;
+    let (nx, ny, nz) = (grid.nx, grid.ny, grid.nz);
+    let dx = grid.lx / nx as f64;
+    let dy = grid.ly / ny as f64;
+    let share = p0 / pattern.len() as f64;
 
     let mut codes = vec![0u8; nx * ny * nz];
     let mut col = vec![0.0f64; nz];
 
     for ix in 0..nx {
-        let x = (ix as f64 + 0.5) * dx - p.lx / 2.0;
+        let x = (ix as f64 + 0.5) * dx - grid.lx / 2.0;
         for iy in 0..ny {
-            let y = (iy as f64 + 0.5) * dy - p.ly / 2.0;
+            let y = (iy as f64 + 0.5) * dy - grid.ly / 2.0;
 
             col.fill(0.0);
             for &(sx, sy) in pattern.spots() {
@@ -1109,7 +1176,9 @@ mod tests {
     }
 
     /// A homogeneous slab with the app's default optical properties, on the
-    /// default 40^3 grid, at whatever photon budget a test can afford.
+    /// default grid — 20 rings of 0.05 cm, so the volume it is drawn in is
+    /// 40 x 40 x 40 voxels over 2 x 2 cm, matching the other models' own
+    /// defaults — at whatever photon budget a test can afford.
     fn params(layers: Vec<McLayerParams>, photons_k: f64) -> MonteCarloParams {
         MonteCarloParams {
             layers,
@@ -1120,12 +1189,17 @@ mod tests {
             pattern_count: 5,
             pattern_spacing: 0.2,
             photons_k,
-            lx: 2.0,
-            ly: 2.0,
-            nx: 40,
-            ny: 40,
+            nr: 20,
+            dr: 0.05,
             nz: 40,
         }
+    }
+
+    /// The voxel box `volume()` returns, worked out the same way
+    /// compute_volume does — tests index into that box, not into the
+    /// parameters.
+    fn box_of(p: &MonteCarloParams) -> Grid {
+        display_grid(p, p.layers.iter().map(|l| l.thickness).sum())
     }
 
     fn run(p: &MonteCarloParams) -> McRun {
@@ -1358,6 +1432,7 @@ mod tests {
         let mut p = params(vec![layer(mua, mus, g, n, 4.0)], 300.0);
         p.nz = 40; // dz = 0.1 cm
         let r = run(&p);
+        let b = box_of(&p);
 
         let fp = fpw1992::Fpw1992Params {
             mua,
@@ -1370,18 +1445,18 @@ mod tests {
             beam_pattern: "single".into(),
             pattern_count: 1,
             pattern_spacing: 0.0,
-            lx: p.lx,
-            ly: p.ly,
+            lx: b.lx,
+            ly: b.ly,
             lz: 4.0,
-            nx: p.nx,
-            ny: p.ny,
-            nz: p.nz,
+            nx: b.nx,
+            ny: b.ny,
+            nz: b.nz,
         };
         let fd = fpw1992::derived(&fp);
         let (diffusion, _) = fpw1992::compute_volume(&fp, &fd);
 
         let (specular, _) = fresnel(N_OUTSIDE, n, 1.0);
-        let cx = p.nx / 2;
+        let cx = b.nx / 2;
         let mfp_transport = 1.0 / (mua + mus * (1.0 - g));
 
         let mut compared = 0usize;
@@ -1394,7 +1469,7 @@ mod tests {
                 continue;
             }
             let mc = r.grid.lookup(&r.phi, 0.0, z) / (1.0 - specular);
-            let dif = diffusion[cx + cx * p.nx + iz * p.nx * p.ny] as f64;
+            let dif = diffusion[cx + cx * b.nx + iz * b.nx * b.ny] as f64;
             let ratio = mc / dif;
             assert!(
                 (0.92..1.08).contains(&ratio),
@@ -1411,7 +1486,7 @@ mod tests {
         // light makes right at the surface.
         let z_shallow = 0.5 * mfp_transport;
         let mc = r.grid.lookup(&r.phi, 0.0, z_shallow) / (1.0 - specular);
-        let dif = diffusion[cx + cx * p.nx + 0 * p.nx * p.ny] as f64;
+        let dif = diffusion[cx + cx * b.nx] as f64;
         assert!(
             mc > 2.0 * dif,
             "at {z_shallow:.3} cm transport should far exceed diffusion, got {mc:.3e} vs {dif:.3e}"
@@ -1531,8 +1606,9 @@ mod tests {
     #[test]
     fn volume_is_finite_positive_and_mostly_well_sampled() {
         let p = params(vec![layer(0.1, 100.0, 0.9, 1.4, 2.0)], 100.0);
+        let g = box_of(&p);
         let (phi, abs, codes) = volume(&p);
-        let n = p.nx * p.ny * p.nz;
+        let n = g.nx * g.ny * g.nz;
         assert_eq!((phi.len(), abs.len(), codes.len()), (n, n, n));
         assert!(phi.iter().all(|v| v.is_finite() && *v >= 0.0), "phi has a bad value");
         assert!(abs.iter().all(|v| v.is_finite() && *v >= 0.0), "abs has a bad value");
@@ -1540,7 +1616,7 @@ mod tests {
 
         // The absorbed-density channel is mu_a * Phi, as for every other
         // model here.
-        let mid = p.nx / 2 + (p.ny / 2) * p.nx + 2 * p.nx * p.ny;
+        let mid = g.nx / 2 + (g.ny / 2) * g.nx + 2 * g.nx * g.ny;
         assert!((abs[mid] / phi[mid] - 0.1).abs() < 1e-6, "abs/phi should be mu_a");
 
         // Near the source, this budget should be comfortably converged.
@@ -1576,13 +1652,14 @@ mod tests {
         p.beam_pattern = "grid".into();
         p.pattern_count = 3;
         p.pattern_spacing = 0.3;
+        let g = box_of(&p);
         let (phi, _, _) = volume(&p);
 
-        let at = |ix: usize, iy: usize, iz: usize| phi[ix + iy * p.nx + iz * p.nx * p.ny];
+        let at = |ix: usize, iy: usize, iz: usize| phi[ix + iy * g.nx + iz * g.nx * g.ny];
         for iz in [0, 5, 20] {
-            for ix in 0..p.nx {
-                for iy in 0..p.ny {
-                    let mirrored = at(p.nx - 1 - ix, iy, iz);
+            for ix in 0..g.nx {
+                for iy in 0..g.ny {
+                    let mirrored = at(g.nx - 1 - ix, iy, iz);
                     assert_eq!(at(ix, iy, iz), mirrored, "x-mirror broken at ({ix}, {iy}, {iz})");
                     assert_eq!(at(ix, iy, iz), at(iy, ix, iz), "x/y swap broken at ({ix}, {iy}, {iz})");
                 }
@@ -1606,7 +1683,54 @@ mod tests {
         assert_eq!(seen.last().copied(), Some(1.0));
     }
 
+    /// The (N_r, dr) → voxel-box mapping, which src/models.ts has to
+    /// reproduce exactly for the frontend to be able to size the IPC buffer
+    /// (see display_grid).
+    #[test]
+    fn the_voxel_box_is_one_ring_per_voxel() {
+        let mut p = params(vec![layer(0.1, 100.0, 0.9, 1.4, 2.0)], 1.0);
+        p.nr = 13;
+        p.dr = 0.04;
+        let g = box_of(&p);
+        assert_eq!((g.nx, g.ny), (26, 26), "the box should be 2*N_r across");
+        assert!((g.lx / g.nx as f64 - p.dr).abs() < 1e-15, "a voxel should be exactly Δr wide");
+        assert!((g.lx / 2.0 - 13.0 * 0.04).abs() < 1e-15, "the box should reach N_r*Δr from the axis");
+
+        // And the tally covers the box's corners, which sit at R*sqrt(2) —
+        // so it holds more rings than were asked for, at the same width.
+        let single = BeamPattern::single();
+        let tally = radial_grid(&p, &single, 2.0);
+        assert!((tally.dr - p.dr).abs() < 1e-15, "the tally ring width is the parameter itself");
+        assert!(
+            tally.n_r as f64 >= 13.0 * 2f64.sqrt(),
+            "{} rings don't reach the box's corners",
+            tally.n_r
+        );
+    }
+
     /* ── validity reporting ── */
+
+    /// A pattern of more than one spot is exact but no longer axisymmetric,
+    /// which this model says out loud rather than leaving to the reader —
+    /// see the warning's own text for what it actually costs.
+    #[test]
+    fn a_multi_spot_pattern_is_flagged_as_not_radially_symmetric() {
+        let mut p = params(vec![layer(0.1, 100.0, 0.9, 1.4, 2.0)], 100.0);
+        let fires = |p: &MonteCarloParams| {
+            check_validity(p, &derived(p))
+                .reasons
+                .iter()
+                .any(|r| r.contains("not radially symmetric"))
+        };
+        assert!(!fires(&p), "a single spot is radially symmetric");
+
+        p.pattern_spacing = 0.2;
+        p.pattern_count = 5;
+        for kind in ["cross", "grid"] {
+            p.beam_pattern = kind.into();
+            assert!(fires(&p), "{kind} should be flagged");
+        }
+    }
 
     #[test]
     fn nonphysical_layer_input_is_reported_alone() {
@@ -1683,10 +1807,8 @@ mod perf_and_sanity {
             pattern_count: 5,
             pattern_spacing: 0.2,
             photons_k,
-            lx: 2.0,
-            ly: 2.0,
-            nx: 40,
-            ny: 40,
+            nr: 20,
+            dr: 0.05,
             nz: 40,
         }
     }

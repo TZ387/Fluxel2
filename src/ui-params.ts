@@ -344,9 +344,8 @@ export function getParams(): Record<string, any> {
      than clamping — and either would be rejected by the backend. Math.trunc
      rather than `| 0`, which wraps anything past 2^31 to a bogus count. */
   const count = (v: number) => (Number.isFinite(v) ? Math.max(1, Math.trunc(v)) : 1);
-  if ("nx" in r) r.nx = count(r.nx);
-  if ("ny" in r) r.ny = count(r.ny);
-  if ("nz" in r) r.nz = count(r.nz);
-  if ("pattern_count" in r) r.pattern_count = count(r.pattern_count);
+  ["nx", "ny", "nz", "nr", "pattern_count"].forEach((id) => {
+    if (id in r) r[id] = count(r[id]);
+  });
   return r;
 }

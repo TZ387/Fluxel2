@@ -26,6 +26,9 @@
      - the layer count is clamped to what the model allows.
      - unknown keys are ignored, so a file from a later version that
        added a parameter still loads here.
+     - a dropdown value that has since been renamed is followed to
+       whichever option now claims it (models.ts's `aliases`), so a
+       rename doesn't silently reset the control to its default.
      - `view` is optional: a file without it loads, and a file with a
        stale colormap or layout keeps the rest of it.
    ================================================================ */
@@ -102,8 +105,15 @@ function normalizeGrid(
   params.forEach((p) => {
     const given = raw[p.id];
     if (p.kind === "select") {
-      if (typeof given === "string" && p.options.some((o) => o.value === given)) {
-        out[p.id] = given;
+      const match = typeof given === "string"
+        ? p.options.find((o) => o.value === given || o.aliases?.includes(given))
+        : undefined;
+      if (match) {
+        out[p.id] = match.value;
+        /* Silent when the file already used the current name; worth a line
+           when it didn't, since the option it lands on is not the one the
+           file names. */
+        if (match.value !== given) warn(`${where}${p.id}: "${String(given)}" is now called "${match.value}" — using that`);
         return;
       }
       warn(`${where}${p.id}: ${given === undefined ? "missing" : `"${String(given)}" is not one of its choices`} — using "${p.def}"`);

@@ -19,7 +19,7 @@ pub struct Fpw1992Params {
     /// sigma (Gaussian) or radius (flattop) in cm, ignored for "pencil".
     pub beam_profile: String,
     pub beam_width: f64,
-    /// "single" | "line" | "grid" — see beam.rs. `pattern_count` is spots
+    /// "single" | "cross" | "grid" — see beam.rs. `pattern_count` is spots
     /// along the line or per side of the grid, `pattern_spacing` the pitch
     /// between neighbours in cm; both ignored for "single".
     pub beam_pattern: String,
@@ -115,7 +115,7 @@ pub fn check_validity(p: &Fpw1992Params, derived: &Fpw1992Derived) -> ValidityRe
     }
 
     let pattern = BeamPattern::from_params(&p.beam_pattern, p.pattern_count, p.pattern_spacing);
-    if let Some(reason) = beam::pattern_extent_warning(&pattern, p.lx, p.ly) {
+    if let Some(reason) = beam::pattern_extent_warning(&pattern, p.lx, p.ly, "enlarge L<sub>x</sub>/L<sub>y</sub>") {
         reasons.push(reason);
     }
 
@@ -325,21 +325,21 @@ mod tests {
         }
     }
 
-    /// A line pattern has to land where it says it does: mirror-symmetric
-    /// about both axes, and — since it spreads the same P0 along x — wider in
-    /// x than in y at the depth where the sources sit.
+    /// A cross pattern has to land where it says it does: mirror-symmetric
+    /// about both axes and about the diagonal (its two arms are the same),
+    /// with the light concentrated along the arms rather than between them.
     #[test]
-    fn line_pattern_is_centred_and_oriented() {
+    fn cross_pattern_is_centred_and_square() {
         let mut params = base_params("pencil", 0.0);
         params.nx = 41;
         params.ny = 41;
         params.nz = 20;
-        params.beam_pattern = "line".to_string();
+        params.beam_pattern = "cross".to_string();
         params.pattern_count = 5;
         params.pattern_spacing = 0.2;
 
         let d = derived(&params);
-        assert_eq!(d.spots, 5);
+        assert_eq!(d.spots, 9, "5 per arm, sharing the centre spot");
         let (phi, _) = compute_volume(&params, &d);
         let at = |ix: usize, iy: usize, iz: usize| phi[ix + iy * 41 + iz * 41 * 41] as f64;
 
@@ -350,10 +350,17 @@ mod tests {
             let (yl, yr) = (at(cx, cy - k, iz), at(cx, cy + k, iz));
             assert!((xl - xr).abs() < 1e-5 * xl, "x mirror at k={k}: {xl} vs {xr}");
             assert!((yl - yr).abs() < 1e-5 * yl, "y mirror at k={k}: {yl} vs {yr}");
-            // The line runs along x, so at equal distance the field is
-            // stronger along it than across it.
-            assert!(xl > yl, "k={k}: along-line {xl} should exceed across-line {yl}");
+            // The two arms are identical, so a quarter turn changes nothing.
+            assert!((xl - yl).abs() < 1e-5 * xl, "arms differ at k={k}: {xl} vs {yl}");
         }
+
+        // A point 8 voxels out along an arm sits right on the outermost spot
+        // of it; one 5 voxels out along *both* axes is closer to the centre
+        // (5*sqrt(2) = 7.1 voxels) and still much darker, which is the sense
+        // in which the pattern is a cross rather than a disk.
+        let on_arm = at(cx + 8, cy, iz);
+        let between = at(cx + 5, cy + 5, iz);
+        assert!(on_arm > 2.0 * between, "arm {on_arm} vs diagonal {between}");
     }
 
     /// A beam far narrower than the grid's voxel size should reproduce the
@@ -407,9 +414,11 @@ mod tests {
         assert_eq!(at(39, 39, 39), 2, "a far bulk voxel should be valid");
     }
 
-    /// Two spots several cm apart: a voxel near one spot's source should
-    /// score by distance to *that* spot, not get dragged down by the other
-    /// being far away — i.e. it's a nearest-spot distance, not an average.
+    /// Spots several cm apart: a voxel near one spot's source should score
+    /// by distance to *that* spot, not get dragged down by the others being
+    /// far away — i.e. it's a nearest-spot distance, not an average. The
+    /// cross puts its other arm's spots off the grid entirely, which is
+    /// exactly the case a centroid would get wrong.
     #[test]
     fn validity_volume_uses_nearest_spot_not_pattern_centroid() {
         let mut params = base_params("pencil", 0.0);
@@ -419,9 +428,9 @@ mod tests {
         params.nx = 60;
         params.ny = 20;
         params.nz = 20;
-        params.beam_pattern = "line".to_string();
+        params.beam_pattern = "cross".to_string();
         params.pattern_count = 2;
-        params.pattern_spacing = 4.0; // spots at x = centre +/- 2 cm
+        params.pattern_spacing = 4.0; // spots at x = centre +/- 2 cm, and at y = +/- 2 cm
 
         let d = derived(&params);
         let codes = compute_validity_volume(&params, &d);

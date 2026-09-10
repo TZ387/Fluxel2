@@ -29,12 +29,15 @@ interface ModelHelp {
 /* All three point-source models take the same beam pattern, described the
    same way, so the paragraph is written once. */
 const PATTERN_PARAGRAPH =
-  "The beam can also be aimed at more than one spot: a line (what a scanner lays down as it sweeps — a row " +
+  "The beam can also be aimed at more than one spot: a cross (two scanned rows at right angles — each a row " +
   "of discrete pulses, which approaches a continuous sweep once the pitch is small next to the beam width) " +
   "or a square grid (a fractional handpiece's array of microbeams). P<sub>0</sub> stays the pattern's total " +
   "power, so the spots share it equally, and light transport being linear means the result is simply " +
   "their fluences added up. The per-spot field is computed once and reused at every spot, so a 25-spot grid " +
-  "costs barely more than a single spot rather than 25 times as much.";
+  "costs barely more than a single spot rather than 25 times as much. Every model here builds a pattern out " +
+  "of one radially symmetric per-spot field, which is why the scan is offered as a cross rather than a " +
+  "single line: the pattern as a whole is still not radially symmetric — nothing but one spot is — but a " +
+  "cross at least looks the same after a quarter turn.";
 
 /* Ordered to match the dropdown — the reference model (and default) first,
    then the closed-form ones from most to least general — rather than by
@@ -64,6 +67,14 @@ const MODEL_HELP: ModelHelp[] = [
         "needs far fewer of them than a voxel-based Monte Carlo would for the same noise. The beam profile " +
         "comes free with it, and more exactly than a convolution would give: each packet's launch point is " +
         "drawn from the profile itself.",
+      "Its grid is that 2-D one, and its parameters say so: &Delta;r is the width of one radial ring — the " +
+        "lateral resolution the answer actually exists at — and N<sub>r</sub> is how many rings, so the run " +
+        "reaches R = N<sub>r</sub>&middot;&Delta;r from the beam axis (reported on the status line). " +
+        "N<sub>z</sub> divides the stack's depth as in every other model. What you are shown is still a box, " +
+        "because that is what the two viewers draw: a square of half-width R, one voxel per ring across, so " +
+        "the picture is at the resolution that was computed rather than an interpolation of it. There is no " +
+        "L<sub>x</sub>, no L<sub>y</sub> and no N<sub>x</sub>/N<sub>y</sub> here — the simulation has no x " +
+        "and no y to divide up.",
       "The price is that the answer is an estimate. Its error falls as 1/&radic;photons, so each halving of " +
         "the error bar costs four times the wait — which makes the photon budget a real choice rather than a " +
         "detail, and worth sweeping. To keep that honest the run is split into equal batches and their spread " +
@@ -106,6 +117,13 @@ const MODEL_HELP: ModelHelp[] = [
       "The geometry has to stay symmetric about the beam axis: flat parallel layers, normal incidence, a " +
         "radially symmetric beam. Tilted incidence, a warped interface, or an inclusion inside a layer would " +
         "all need a full 3-D grid instead, and are not supported.",
+      "A beam <em>pattern</em> of more than one spot is not radially symmetric either, and the app says so " +
+        "when you pick one. It is not an error: the layers are flat and uniform, so every spot really does " +
+        "see the same kernel shifted, and adding them up is exact. What it costs is that the one kernel now " +
+        "has to reach across the whole pattern on the same photon budget, and that the noise overlay adds " +
+        "the spots' errors as though they were independent when they are all read off that single kernel — " +
+        "so it reads slightly optimistic wherever spots overlap. Give a wide pattern more photons than a " +
+        "single spot would need.",
       "The innermost radial bin is an area average over 0 &le; r &lt; &Delta;r, so an idealised pencil " +
         "beam's on-axis peak gets smoothed over that bin. The app warns when the bin is wide next to a " +
         "transport mean free path; a beam profile with a real width has no such issue.",
