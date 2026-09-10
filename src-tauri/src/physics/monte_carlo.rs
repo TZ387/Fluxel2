@@ -126,12 +126,15 @@ const REL_SE_POOR: f64 = 0.20;
 
 /// Ceiling on the (r, z) tally's bin count, so a run can never ask for an
 /// unbounded allocation — a wide beam pattern and a small, finely divided
-/// grid can push the radial reach up and the bin width down at once, and
-/// nothing clamps what's typed into the parameter panel. Hitting this only
-/// coarsens the far field; check_validity warns about a reach like that
-/// well before it gets here. Costed per worker (each allocates its own
-/// tally, see trace_batches): 2M bins is 48 MB, the same order as this
-/// app's largest voxel volumes.
+/// grid can push the radial reach up and the ring width down at once, and
+/// nothing clamps what's typed into the parameter panel. Hitting it costs
+/// reach, not resolution: the rings keep their width dr and the tally simply
+/// stops short, past which collisions are dropped (TallyGrid::add) and
+/// lookups flatten out at the outermost ring's value — so the far corners of
+/// a volume that hits this read as a plateau rather than a decay.
+/// check_validity's reach warning fires long before it gets here. Costed per
+/// worker (each allocates its own tally, see trace_batches): 2M bins is
+/// 48 MB, the same order as this app's largest voxel volumes.
 const MAX_TALLY_BINS: usize = 2_000_000;
 
 /// Cosine above which a direction counts as exactly along z, where the
@@ -218,10 +221,10 @@ pub struct MonteCarloDerived {
     /// scattering — lost to the tissue no matter how the rest is traced.
     pub specular: f64,
     /// Radial bins the run actually tallies onto, for a sense of what the
-    /// photon budget is being spread over. Equal to the `nr` asked for when
-    /// the beam is a single spot filling the reported radius, and larger
-    /// when the grid's corners or an off-axis beam pattern put a displayed
-    /// voxel further from a spot than R (see radial_grid).
+    /// photon budget is being spread over. Always more than the `nr` asked
+    /// for, since the square box's own corners sit at R*sqrt(2) — and more
+    /// again for a beam pattern whose spots are off the axis (see
+    /// radial_grid).
     pub n_r: usize,
 }
 
@@ -985,8 +988,9 @@ pub fn check_validity(p: &MonteCarloParams, derived: &MonteCarloDerived) -> Vali
     // is exact — what a multi-spot pattern costs is that the single kernel
     // now has to cover the whole pattern's reach on the same photon budget,
     // and that the noise overlay treats the spots' errors as independent
-    // when they are all read off that one kernel, so it reads a little
-    // optimistic where spots overlap.
+    // when they are all read off that one kernel — two spots equidistant
+    // from a voxel read the *same* bin, where the true correlation is 1 and
+    // adding in quadrature understates the error by up to sqrt(spots).
     if !pattern.is_single() {
         reasons.push(format!(
             "the beam pattern's {} spots are not radially symmetric, and this model is: it traces \
@@ -994,9 +998,9 @@ pub fn check_validity(p: &MonteCarloParams, derived: &MonteCarloDerived) -> Vali
              itself is exact — the layers are flat and uniform, so every spot really does see the \
              same kernel — but that one kernel now has to reach across the whole pattern on the \
              same photon budget, and the noise overlay adds the spots' errors as if they were \
-             independent when they all come off it, so it reads optimistic where spots overlap. \
-             Read the overlay, and treat a wide pattern as needing more photons than a single spot \
-             would",
+             independent when they all come off it, so it reads optimistic wherever a voxel sits \
+             at a similar distance from more than one spot. Read the overlay, and treat a wide \
+             pattern as needing more photons than a single spot would",
             pattern.len()
         ));
     }
@@ -1624,6 +1628,44 @@ mod tests {
         assert!(good > n / 20, "only {good} of {n} voxels reached the good-noise band");
     }
 
+    /// Every model here reports absorbed power density, and integrating it
+    /// over the voxel box has to give back the weight the run deposited,
+    /// counted photon by photon and independently of any grid. That ties
+    /// display_grid's geometry — dx = dy = Δr, half-width N_r·Δr,
+    /// dz = L_z/N_z — to the tally's own annulus volumes: get any of them
+    /// wrong by a factor and the energy lands wrong by that factor.
+    ///
+    /// A flat-top beam and a short penetration depth, so the box holds
+    /// essentially the whole field (R = 4 cm against a 0.25 cm 1/μ_eff) and
+    /// the midpoint quadrature isn't fighting a pencil beam's on-axis spike.
+    /// The budget can be small: both sides come from the same seeded run, so
+    /// the statistical error is common to them and cancels in the ratio,
+    /// which leaves only the resampling. Measured at 0.9996 — the band below
+    /// is wide enough to be about factors, not about the last digit.
+    #[test]
+    fn the_voxel_volume_carries_the_absorbed_power() {
+        let mut p = params(vec![layer(0.5, 100.0, 0.9, 1.4, 2.0)], 20.0);
+        p.nr = 80;
+        p.beam_profile = "flattop".into();
+        p.beam_width = 0.3;
+        let g = box_of(&p);
+
+        let (_, abs, _) = volume(&p);
+        let dv = (g.lx / g.nx as f64) * (g.ly / g.ny as f64) * g.dz;
+        let in_box = abs.iter().map(|&a| a as f64).sum::<f64>() * dv;
+
+        // p0 = 1 W, so the integral is a fraction of P0 — the same thing the
+        // photon-by-photon accounting reports.
+        let r = run(&p);
+        let deposited = r.stats.absorbed / r.photons as f64;
+        let ratio = in_box / deposited;
+        println!("absorbed in box {in_box:.5} vs deposited {deposited:.5} (ratio {ratio:.4})");
+        assert!(
+            (0.97..1.03).contains(&ratio),
+            "the voxel box holds {in_box:.5} of P0 but the run deposited {deposited:.5} (ratio {ratio:.4})"
+        );
+    }
+
     /// Widening the beam spreads the same power over more area, so the peak
     /// drops — the same check fpw1992.rs and liemert_kienle.rs make of their
     /// convolutions, except here the profile is in the launch distribution
@@ -1662,6 +1704,34 @@ mod tests {
                     let mirrored = at(g.nx - 1 - ix, iy, iz);
                     assert_eq!(at(ix, iy, iz), mirrored, "x-mirror broken at ({ix}, {iy}, {iz})");
                     assert_eq!(at(ix, iy, iz), at(iy, ix, iz), "x/y swap broken at ({ix}, {iy}, {iz})");
+                }
+            }
+        }
+    }
+
+    /// The reason the scan is a cross rather than a line: the volume it
+    /// produces is unchanged by a quarter turn, which a single row's is not.
+    /// Exact, not approximate — a pattern is one kernel shifted and summed,
+    /// so the symmetry survives however noisy that kernel is.
+    #[test]
+    fn cross_pattern_survives_a_quarter_turn() {
+        let mut p = params(vec![layer(0.1, 100.0, 0.9, 1.4, 2.0)], 16.0);
+        p.beam_pattern = "cross".into();
+        p.pattern_count = 4; // even, so the arms straddle the axis
+        p.pattern_spacing = 0.3;
+        let g = box_of(&p);
+        let (phi, _, _) = volume(&p);
+
+        let at = |ix: usize, iy: usize, iz: usize| phi[ix + iy * g.nx + iz * g.nx * g.ny];
+        for iz in [0, 5, 20] {
+            for ix in 0..g.nx {
+                for iy in 0..g.ny {
+                    assert_eq!(at(ix, iy, iz), at(iy, ix, iz), "x/y swap broken at ({ix}, {iy}, {iz})");
+                    assert_eq!(
+                        at(ix, iy, iz),
+                        at(g.nx - 1 - ix, iy, iz),
+                        "x-mirror broken at ({ix}, {iy}, {iz})"
+                    );
                 }
             }
         }

@@ -10,13 +10,15 @@ HTML/CSS/vanilla-JS app; this project reworks it as a Tauri app (TypeScript fron
 targeting Linux and Windows as desktop platforms.
 
 The port is underway: two of Fluxel's theoretical models are implemented (Farrell-Patterson-Wilson 1992 and
-Kubelka-Munk), plus two added beyond upstream Fluxel — Liemert & Kienle 2010 (N-layer point-source diffusion) and an
-N-layer Monte Carlo photon-transport model, which is the default and the reference the other three are checked against
-(see README.md's Models section for both) — with a schema-driven parameter UI, JSON save/load of a run's inputs, and a
-canvas-based 3-slice volume renderer. See [README.md](README.md)'s Roadmap for what's not built yet — a reasonable
-source of next tasks if none is otherwise specified.
+Kubelka-Munk), plus two added beyond upstream Fluxel — Liemert & Kienle 2010 (N-layer point-source diffusion) and a
+2-D (radially symmetric) N-layer Monte Carlo photon-transport model, which is the default and the reference the other
+three are checked against (see README.md's Models section for both) — with a schema-driven parameter UI, JSON
+save/load of a run's inputs, and a canvas-based 3-slice volume renderer. See [README.md](README.md)'s Roadmap for
+what's not built yet — a reasonable source of next tasks if none is otherwise specified.
 
-- `src/` — frontend (TypeScript, vanilla — no framework): `models.ts` (each model's parameter schema and defaults),
+- `src/` — frontend (TypeScript, vanilla — no framework): `models.ts` (each model's parameter schema and defaults,
+  plus the `grid` that turns those params into the voxel box a run comes back on — not the same thing for every model,
+  see the Monte Carlo note below),
   `ui-params.ts` (renders any model's params generically from that schema and reads it back, including each repeating
   instance's editable name), `settings.ts` (the save/load file format and the checking of a loaded file — pure, so it
   needs no DOM to test), `render.ts` (colormaps, value scales, slice-plane images, the colourbar, and the flat 3-panel
@@ -29,13 +31,17 @@ source of next tasks if none is otherwise specified.
   `check_validity()`, and `compute_volume()`, exposed to the frontend as a `<model>_summary`/`<model>_volume`
   Tauri command pair registered in `src-tauri/src/lib.rs`. Lives here rather than in `src/` as JS because the
   per-voxel compute loops are a genuine hot path at the grid sizes this app targets — the same reasoning
-  applies to any future compute-heavy addition. `monte_carlo.rs` bends that shape slightly: its
+  applies to any future compute-heavy addition. `monte_carlo.rs` bends that shape in three ways. Its
   `compute_volume()` also returns the overlay buffer (recomputing it separately would mean a second
-  simulation) and takes a progress callback, wired to a `tauri::ipc::Channel` in lib.rs. It is also the one
-  model that runs multi-threaded (`std::thread::scope` over its photon batches, no dependency), which has one
-  consequence worth knowing before adding tests: its own tests pin the worker count, because the test harness
-  is already parallel and a run per test taking every core makes wall-clock assertions anywhere in the suite
-  measure spare capacity rather than code. Keep any timing bound generous for the same reason.
+  simulation) and takes a progress callback, wired to a `tauri::ipc::Channel` in lib.rs. It is also the only
+  model that is *not* parameterized on the Cartesian voxel box it returns: being axisymmetric it takes
+  `nr`/`dr`/`nz` (rings, ring width, depth bins) and derives that box in `display_grid()` — which `grid` in
+  `src/models.ts` has to reproduce exactly, since the frontend must size the IPC buffer before it can read it.
+  Change one and change the other; `compute.ts` measures the returned buffer to catch it if you don't. It is
+  also the one model that runs multi-threaded (`std::thread::scope` over its photon batches, no dependency),
+  which has one consequence worth knowing before adding tests: its own tests pin the worker count, because the
+  test harness is already parallel and a run per test taking every core makes wall-clock assertions anywhere in
+  the suite measure spare capacity rather than code. Keep any timing bound generous for the same reason.
 - `tests/` — frontend tests, run with `npm test`. No framework: `tests/run.mjs` bundles each `tests/*.test.ts` with
   esbuild (which is what resolves the extensionless imports `src/` uses, the way Vite does in the app) and runs each
   in its own node process. `harness.ts` is a recording canvas context plus a failure counter — the renderers draw and

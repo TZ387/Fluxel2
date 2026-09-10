@@ -201,10 +201,15 @@ pub fn min_rho2_to_spots(x: f64, y: f64, xs: f64, ys: f64, spots: &[(f64, f64)])
         .fold(f64::INFINITY, f64::min)
 }
 
-/// The largest distance from any spot to any corner of the grid's footprint —
-/// how far out the axisymmetric kernel has to be evaluated, and (for
-/// liemert_kienle.rs) how far out its artificial cylinder wall has to sit.
-/// Reduces to half the grid's diagonal for a single centred spot.
+/// How far out the axisymmetric kernel has to be evaluated, and (for
+/// liemert_kienle.rs) how far out its artificial cylinder wall has to sit:
+/// the distance from the corner of the pattern's bounding box to the
+/// opposite corner of the grid's footprint. Reduces to half the grid's
+/// diagonal for a single centred spot, and is exact whenever the pattern
+/// actually has a spot at that bounding-box corner (a single spot, a grid).
+/// A cross has none — its corners are empty — so there it is an upper bound,
+/// which is the safe direction: an over-long kernel wastes a few bins, a
+/// short one would flatten the far field.
 pub fn max_kernel_radius(lx: f64, ly: f64, pattern: &BeamPattern) -> f64 {
     let (hx, hy) = pattern.half_extent();
     (hx + lx / 2.0).hypot(hy + ly / 2.0)

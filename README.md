@@ -70,9 +70,9 @@ Each model is self-contained in Rust under `src-tauri/src/physics/` — its comp
 comments with the full derivation notes are the single source of truth (see that directory, not here, for the
 math).
 
-- **2-D Monte Carlo (radial symmetry)** — N-layer photon transport; the default, and the reference the other
-  three are checked against. Traces photon packets through the layer stack (hop by an exponentially sampled free path, deposit
-  weight at each collision, scatter by Henyey-Greenstein, Fresnel reflect/refract at every refractive-index
+- **2-D Monte Carlo (radial symmetry)** — N-layer photon transport; the default, and the reference the other three
+  are checked against. Traces photon packets through the layer stack (hop by an exponentially sampled free path,
+  deposit weight at each collision, scatter by Henyey-Greenstein, Fresnel reflect/refract at every refractive-index
   step including total internal reflection) rather than approximating the transport equation, so none of the
   restrictions the other models carry apply: a layer thinner than a mean free path, absorption comparable to
   scattering, an index mismatch between layers, or the unscattered first millimetre below the surface are all
